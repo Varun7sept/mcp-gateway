@@ -11,6 +11,7 @@ import (
 	"github.com/varunbanda/mcp-gateway/internal/config"
 	"github.com/varunbanda/mcp-gateway/internal/gateway"
 	"github.com/varunbanda/mcp-gateway/internal/logger"
+	"github.com/varunbanda/mcp-gateway/internal/mcpserver"
 	"github.com/varunbanda/mcp-gateway/internal/notes"
 	"github.com/varunbanda/mcp-gateway/internal/server"
 )
@@ -60,18 +61,21 @@ func main() {
 		log.Println("MongoDB not configured — authentication disabled")
 	}
 
-	// Start notes server (embedded — no separate process needed)
-	notesSrv, err := notes.New(":3002")
-	if err != nil {
-		log.Printf("WARNING: Notes server failed to start: %v", err)
-	} else {
+	// Start embedded MCP servers (no separate processes needed)
+	startMCP := func(name string, fn func() error) {
 		go func() {
-			if err := notesSrv.Start(); err != nil {
-				log.Printf("Notes server exited: %v", err)
+			if err := fn(); err != nil {
+				log.Printf("%s server exited: %v", name, err)
 			}
 		}()
-		defer notesSrv.Close()
 	}
+	if s, err := notes.New(":3002"); err == nil { startMCP("notes", s.Start); defer s.Close() }
+	startMCP("weather", func() error { return mcpserver.StartWeather(":3001") })
+	startMCP("github", func() error { return mcpserver.StartGitHub(":3003") })
+	startMCP("crypto", func() error { return mcpserver.StartCrypto(":3004") })
+	startMCP("news", func() error { return mcpserver.StartNews(":3005") })
+	startMCP("url-tools", func() error { return mcpserver.StartURLTools(":3006") })
+	startMCP("search", func() error { return mcpserver.StartSearch(":3007") })
 
 	// Start health checker (every 10 seconds)
 	gw.StartHealthChecker(10 * time.Second)
