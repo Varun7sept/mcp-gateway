@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/varunbanda/mcp-gateway/internal/ai"
 	"github.com/varunbanda/mcp-gateway/internal/auth"
 	"github.com/varunbanda/mcp-gateway/internal/gateway"
 )
@@ -18,8 +19,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Message   string `json:"message"`
-		SessionID string `json:"session_id"`
+		Message      string `json:"message"`
+		SessionID    string `json:"session_id"`
+		ApprovalID   string `json:"approval_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
@@ -37,22 +39,49 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	username, _ := auth.UserFromContext(r.Context())
 
-	// Store user message in MongoDB; auto-update title on first message
-	chatStore := s.auth.ChatStore()
-	chatStore.AddMessage(req.SessionID, "user", req.Message, nil)
+	var history []map[string]string
+	var chatStore *auth.ChatStore
 
-	if sess, _ := chatStore.GetSession(req.SessionID, username); sess != nil && sess.Title == "New Chat" {
-		title := req.Message
-		if len(title) > 50 {
-			title = title[:50] + "..."
+	// Chat persistence requires MongoDB auth; skip if not configured
+	if s.auth != nil {
+		chatStore = s.auth.ChatStore()
+
+		// If continuing after approval, wait for approval before proceeding
+		if req.ApprovalID != "" && s.approvalStore != nil {
+			_, err := s.approvalStore.WaitForApproval(req.ApprovalID, username, 500*time.Millisecond)
+			if err != nil {
+				s.jsonResponse(w, http.StatusForbidden, map[string]string{
+					"error":   err.Error(),
+					"message": "The action was not approved. Try rephrasing your request.",
+				})
+				return
+			}
 		}
-		chatStore.UpdateSessionTitle(req.SessionID, username, title)
+
+		// Store user message; auto-update title on first message
+		chatStore.AddMessage(req.SessionID, "user", req.Message, nil)
+
+		if sess, _ := chatStore.GetSession(req.SessionID, username); sess != nil && sess.Title == "New Chat" {
+			title := req.Message
+			if len(title) > 50 {
+				title = title[:50] + "..."
+			}
+			chatStore.UpdateSessionTitle(req.SessionID, username, title)
+		}
+
+		// Load recent messages for context (last 10)
+		history = buildHistoryFromMessages(chatStore, req.SessionID)
 	}
 
-	// Load recent messages for context (last 10)
-	history := buildHistoryFromMessages(chatStore, req.SessionID)
+	// Build orchestrator config with memory and approval store
+	orchCfg := &ai.OrchestratorConfig{}
+	if s.approvalStore != nil && username != "" {
+		orchCfg.ApprovalStore = s.approvalStore
+		orchCfg.ApprovalUser = username
+	}
 
-	agentResult, err := s.brain.RunAgentWithHistory(req.Message, history, func(toolName string, args map[string]any) (string, error) {
+	// Process via orchestrator (planning + parallel execution + self-correction + approval)
+	callToolFn := func(toolName string, args map[string]any) (string, error) {
 		fwdReq := gateway.ForwardRequest{
 			JSONRPC: "2.0",
 			ID:      1,
@@ -68,33 +97,60 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return "", err
 		}
 		return extractToolText(result.Response), nil
-	})
+	}
 
+	orchResult, err := s.brain.ProcessWithOrchestrator(req.Message, history, callToolFn, orchCfg)
 	if err != nil {
 		s.jsonResponse(w, http.StatusInternalServerError, map[string]string{"error": "Agent error: " + err.Error()})
+		return
+	}
+
+	// If human approval is needed, return early with approval info
+	if orchResult.NeedsApproval {
+		s.jsonResponse(w, http.StatusOK, map[string]any{
+			"status":            "pending_approval",
+			"approval_id":       orchResult.ApprovalID,
+			"message":           "This action needs your approval before proceeding.",
+			"plan_tasks":        orchResult.Plan.Tasks,
+		})
 		return
 	}
 
 	// Store AI response with tool metadata
 	meta := map[string]any{}
 	var toolsUsed []string
-	for _, step := range agentResult.Steps {
+	for _, step := range orchResult.Steps {
 		toolsUsed = append(toolsUsed, step.ToolName)
 		s.logger.Log("agent", step.ToolName, "", username, "success", "", 0)
 	}
 	meta["tools"] = toolsUsed
 	meta["latency"] = time.Since(start).Milliseconds()
-	meta["steps"] = agentResult.Steps
-	chatStore.AddMessage(req.SessionID, "ai", agentResult.Answer, meta)
+	meta["steps"] = orchResult.Steps
+	if orchResult.Plan != nil {
+		meta["num_tasks_planned"] = len(orchResult.Plan.Tasks)
+	}
+	if chatStore != nil {
+		chatStore.AddMessage(req.SessionID, "ai", orchResult.Answer, meta)
+	}
 
 	s.logger.Log("chat", "", "", username, "success", "", time.Since(start))
 
+	numTasks := 0
+	if orchResult.Plan != nil {
+		numTasks = len(orchResult.Plan.Tasks)
+	}
+	allCompleted := false
+	if orchResult.Report != nil {
+		allCompleted = orchResult.Report.Complete
+	}
 	s.jsonResponse(w, http.StatusOK, map[string]any{
-		"answer":     agentResult.Answer,
-		"steps":      agentResult.Steps,
-		"tools_used": toolsUsed,
-		"num_steps":  len(agentResult.Steps),
-		"latency":    time.Since(start).Milliseconds(),
+		"answer":          orchResult.Answer,
+		"steps":           orchResult.Steps,
+		"tools_used":      toolsUsed,
+		"num_steps":       len(orchResult.Steps),
+		"latency":         time.Since(start).Milliseconds(),
+		"num_tasks":       numTasks,
+		"all_completed":   allCompleted,
 	})
 }
 

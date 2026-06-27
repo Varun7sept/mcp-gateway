@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/varunbanda/mcp-gateway/internal/ai"
+	"github.com/varunbanda/mcp-gateway/internal/approval"
 	"github.com/varunbanda/mcp-gateway/internal/auth"
 	"github.com/varunbanda/mcp-gateway/internal/config"
 	"github.com/varunbanda/mcp-gateway/internal/gateway"
@@ -39,7 +40,10 @@ func main() {
 	groqKey := os.Getenv("GROQ_API_KEY")
 	if groqKey != "" {
 		brain = ai.New(groqKey)
-		log.Println("AI Chat enabled (Groq API)")
+		// Attach memory store for cross-session recall
+		memory := ai.NewInMemoryStore(200)
+		brain.WithMemory(memory)
+		log.Println("AI Chat enabled (Groq API) with memory store")
 	} else {
 		log.Println("AI Chat disabled (set GROQ_API_KEY to enable)")
 	}
@@ -79,8 +83,12 @@ func main() {
 	startMCP("search", func() error { return mcpserver.StartSearch(":3007") })
 
 	// Start Python RAG server (ChromaDB + Flask)
+	pythonCmd := "python3"
+	if _, err := exec.LookPath("python3"); err != nil {
+		pythonCmd = "python"
+	}
 	startMCP("documents", func() error {
-		cmd := exec.Command("python3", "examples/docs-server/server.py")
+		cmd := exec.Command(pythonCmd, "examples/docs-server/server.py")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
@@ -96,7 +104,12 @@ func main() {
 			port = n
 		}
 	}
+	// Create approval store for human-in-the-loop (5 min timeout)
+	approvalStore := approval.NewStore(5 * time.Minute)
+	log.Println("Human-in-the-loop approval store initialized")
+
 	srv := server.New(gw, reqLogger, brain, authenticator, port)
+	srv.WithApprovalStore(approvalStore)
 	if err := srv.Start(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}

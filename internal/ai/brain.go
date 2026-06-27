@@ -27,6 +27,13 @@ type Brain struct {
 	apiKey     string
 	models     []string
 	httpClient *http.Client
+	memory     MemoryStore
+}
+
+// WithMemory attaches a memory store for cross-session recall.
+func (b *Brain) WithMemory(m MemoryStore) *Brain {
+	b.memory = m
+	return b
 }
 
 // New creates a new AI Brain with the given Groq API key.

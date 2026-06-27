@@ -192,21 +192,20 @@ const chatPageHTML = `<!DOCTYPE html>
 
         // ===== State Management (server-backed) =====
         let sessions = [];
-        let currentSessionId = null;
+        let currentSessionId = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 
         async function loadSessionsFromServer() {
             try {
                 const resp = await fetch('/api/chat/sessions', { headers: authHeaders() });
                 if (resp.status === 401) { window.location.href = '/'; return; }
+                if (resp.status === 404 || resp.status === 405) { return; }
                 const data = await resp.json();
                 sessions = data.sessions || [];
                 renderSidebar();
                 if (sessions.length > 0) {
-                    if (!currentSessionId || !sessions.find(s => s.id === currentSessionId)) {
+                    if (!sessions.find(s => s.id === currentSessionId)) {
                         switchSession(sessions[0].id);
                     }
-                } else {
-                    await createNewSession();
                 }
             } catch { sessions = []; }
         }
@@ -219,6 +218,10 @@ const chatPageHTML = `<!DOCTYPE html>
                     body: JSON.stringify({ title: 'New Chat' })
                 });
                 if (resp.status === 401) { window.location.href = '/'; return; }
+                if (resp.status === 404 || resp.status === 405) {
+                    currentSessionId = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+                    return;
+                }
                 const session = await resp.json();
                 sessions.unshift(session);
                 renderSidebar();
@@ -226,7 +229,9 @@ const chatPageHTML = `<!DOCTYPE html>
             } catch {}
         }
 
-        function newSession() { createNewSession(); }
+        function newSession() {
+            currentSessionId = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        }
 
         async function switchSession(id) {
             currentSessionId = id;
@@ -254,6 +259,10 @@ const chatPageHTML = `<!DOCTYPE html>
             try {
                 const resp = await fetch('/api/chat/sessions/' + id + '/messages', { headers: authHeaders() });
                 if (resp.status === 401) { window.location.href = '/'; return; }
+                if (resp.status === 404 || resp.status === 405) {
+                    welcome.style.display = 'block';
+                    return;
+                }
                 const data = await resp.json();
                 const messages = data.messages || [];
 
@@ -316,26 +325,40 @@ const chatPageHTML = `<!DOCTYPE html>
         }
 
         // ===== Sending Messages =====
+        let pendingApprovalId = null;
+        let pendingApprovalMessage = null;
+
         async function sendMessage() {
             const input = document.getElementById('user-input');
             const msg = input.value.trim();
             if (!msg || !currentSessionId) return;
 
+            await doSend(msg, null);
+            input.focus();
+            scrollToBottom();
+        }
+
+        async function doSend(msg, approvalId) {
             const welcome = document.getElementById('welcome');
             if (welcome) welcome.style.display = 'none';
 
-            addMessageToDOM(msg, 'user');
-            input.value = '';
+            if (!approvalId) {
+                addMessageToDOM(msg, 'user');
+                document.getElementById('user-input').value = '';
+            }
 
             document.getElementById('send-btn').disabled = true;
             document.getElementById('typing').style.display = 'block';
             scrollToBottom();
 
             try {
+                const body = { message: msg, session_id: currentSessionId };
+                if (approvalId) body.approval_id = approvalId;
+
                 const resp = await fetch('/api/chat', {
                     method: 'POST',
                     headers: authHeaders(),
-                    body: JSON.stringify({ message: msg, session_id: currentSessionId })
+                    body: JSON.stringify(body)
                 });
                 if (resp.status === 401) { window.location.href = '/'; return; }
                 const data = await resp.json();
@@ -343,23 +366,98 @@ const chatPageHTML = `<!DOCTYPE html>
                 document.getElementById('typing').style.display = 'none';
                 document.getElementById('send-btn').disabled = false;
 
-                const meta = data.error ? {} : { tools: data.tools_used, steps: data.steps, latency: data.latency };
+                // Handle pending approval (human-in-the-loop)
+                if (data.status === 'pending_approval') {
+                    pendingApprovalId = data.approval_id;
+                    pendingApprovalMessage = msg;
+                    showApprovalPrompt(data);
+                    return;
+                }
+
+                const meta = data.error ? {} : { tools: data.tools_used, steps: data.steps, latency: data.latency, num_tasks: data.num_tasks };
                 const answer = data.error ? 'Error: ' + data.error : data.answer;
                 addMessageToDOM(answer, 'ai', meta);
 
                 // Reload sidebar to get updated title
-                const sresp = await fetch('/api/chat/sessions', { headers: authHeaders() });
-                const sdata = await sresp.json();
-                sessions = sdata.sessions || [];
-                renderSidebar();
+                try {
+                    const sresp = await fetch('/api/chat/sessions', { headers: authHeaders() });
+                    if (sresp.ok) {
+                        const sdata = await sresp.json();
+                        sessions = sdata.sessions || [];
+                        renderSidebar();
+                    }
+                } catch {}
             } catch (e) {
                 document.getElementById('typing').style.display = 'none';
                 document.getElementById('send-btn').disabled = false;
                 addMessageToDOM('Connection error. Is the gateway running?', 'ai', {});
             }
 
-            input.focus();
             scrollToBottom();
+        }
+
+        function showApprovalPrompt(data) {
+            const container = document.getElementById('chat-container');
+            const div = document.createElement('div');
+            div.className = 'message ai';
+            div.id = 'approval-prompt';
+
+            let planInfo = '';
+            if (data.plan_tasks && data.plan_tasks.length > 0) {
+                planInfo = '<div class="steps"><strong>Planned tasks:</strong>';
+                data.plan_tasks.forEach(t => {
+                    const args = t.arguments ? Object.entries(t.arguments).map(([k,v]) => k+'='+v).join(', ') : '';
+                    planInfo += '<div class="step-item"><span class="step-dot"></span>' + t.tool + '(' + args + ') — ' + (t.description || '') + '</div>';
+                });
+                planInfo += '</div>';
+            }
+
+            div.innerHTML = '<div class="bubble" style="border-color:#f9731640;">' +
+                '<strong style="color:#f97316;">Action Required</strong><br><br>' +
+                'This action needs your approval before proceeding:' +
+                planInfo +
+                '<div style="margin-top:12px;display:flex;gap:8px;">' +
+                '<button class="send-btn" onclick="approveAction()" style="background:#22c55e;">Approve</button>' +
+                '<button class="send-btn" onclick="rejectAction()" style="background:#ef4444;">Reject</button>' +
+                '</div></div>';
+            container.appendChild(div);
+            scrollToBottom();
+        }
+
+        async function approveAction() {
+            if (!pendingApprovalId) return;
+            document.getElementById('send-btn').disabled = true;
+            document.getElementById('typing').style.display = 'block';
+            scrollToBottom();
+
+            try {
+                await fetch('/api/approvals/' + pendingApprovalId + '/approve', {
+                    method: 'POST', headers: authHeaders()
+                });
+                document.getElementById('approval-prompt').remove();
+                await doSend(pendingApprovalMessage, pendingApprovalId);
+                pendingApprovalId = null;
+                pendingApprovalMessage = null;
+            } catch (e) {
+                document.getElementById('typing').style.display = 'none';
+                document.getElementById('send-btn').disabled = false;
+                addMessageToDOM('Error approving action: ' + e.message, 'ai', {});
+            }
+        }
+
+        async function rejectAction() {
+            if (!pendingApprovalId) return;
+            try {
+                await fetch('/api/approvals/' + pendingApprovalId + '/reject', {
+                    method: 'POST', headers: authHeaders()
+                });
+                document.getElementById('approval-prompt').remove();
+                addMessageToDOM('Action rejected. How else can I help you?', 'ai', {});
+                pendingApprovalId = null;
+                pendingApprovalMessage = null;
+            } catch (e) {
+                addMessageToDOM('Error rejecting action: ' + e.message, 'ai', {});
+            }
         }
 
         // ===== Voice =====

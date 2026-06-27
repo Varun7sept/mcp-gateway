@@ -753,16 +753,31 @@ const dashboardHTML = `<!DOCTYPE html>
                         const uname = localStorage.getItem('mcp_username');
                         if (uname) setUserDisplay(uname);
                         refreshAll();
+                    } else if (r.status === 503) {
+                        clearToken();
+                        hideAuthOverlay();
+                        refreshAll();
                     } else {
                         clearToken();
                         showAuthOverlay();
                     }
                 })
                 .catch(() => { showAuthOverlay(); });
-            setInterval(refreshAll, 2000);
         } else {
-            showAuthOverlay();
+            // No saved token — check if auth is even configured
+            fetch(API_BASE + '/api/auth/me')
+                .then(r => {
+                    if (r.status === 503) {
+                        // Auth disabled — skip login
+                        hideAuthOverlay();
+                        refreshAll();
+                    } else {
+                        showAuthOverlay();
+                    }
+                })
+                .catch(() => { showAuthOverlay(); });
         }
+        setInterval(refreshAll, 2000);
 
         // --- Tab Switching ---
         function switchTab(tab) {

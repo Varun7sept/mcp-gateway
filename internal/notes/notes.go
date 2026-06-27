@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 type MCPRequest struct {
@@ -69,7 +69,7 @@ type Server struct {
 }
 
 func New(port string) (*Server, error) {
-	database, err := sql.Open("sqlite3", "./notes.db")
+	database, err := sql.Open("sqlite", "./notes.db")
 	if err != nil {
 		return nil, err
 	}

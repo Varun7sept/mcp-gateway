@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/varunbanda/mcp-gateway/internal/ai" // Used for Brain type
+	"github.com/varunbanda/mcp-gateway/internal/approval"
 	"github.com/varunbanda/mcp-gateway/internal/auth"
 	"github.com/varunbanda/mcp-gateway/internal/gateway"
 	"github.com/varunbanda/mcp-gateway/internal/logger"
@@ -19,11 +20,12 @@ var _ *ai.Brain
 
 // Server is our HTTP server that wraps the Gateway logic.
 type Server struct {
-	gateway *gateway.Gateway
-	logger  *logger.Logger
-	brain   *ai.Brain
-	auth    *auth.Auth
-	port    int
+	gateway        *gateway.Gateway
+	logger         *logger.Logger
+	brain          *ai.Brain
+	auth           *auth.Auth
+	port           int
+	approvalStore  *approval.Store
 }
 
 // New creates a new HTTP server.
@@ -37,6 +39,12 @@ func New(gw *gateway.Gateway, reqLogger *logger.Logger, aiBrain *ai.Brain, authe
 	}
 }
 
+// WithApprovalStore attaches a human-in-the-loop approval store.
+func (s *Server) WithApprovalStore(as *approval.Store) *Server {
+	s.approvalStore = as
+	return s
+}
+
 // Start begins listening for HTTP requests.
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
@@ -47,11 +55,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /chat", s.handleChatPage)
 
 	// Auth endpoints (public — signup/login don't need a token)
-	if s.auth != nil {
-		mux.HandleFunc("POST /api/auth/signup", s.handleSignup)
-		mux.HandleFunc("POST /api/auth/login", s.handleLogin)
-		mux.HandleFunc("GET /api/auth/me", s.handleAuthMe)
-	} else {
+	mux.HandleFunc("POST /api/auth/signup", s.handleSignup)
+	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	mux.HandleFunc("GET /api/auth/me", s.handleAuthMe)
+	if s.auth == nil {
 		log.Println("Auth disabled — all API routes are public")
 	}
 
@@ -67,6 +74,11 @@ func (s *Server) Start() error {
 		mux.HandleFunc("POST /api/chat/sessions", s.handleCreateSession)
 		mux.HandleFunc("DELETE /api/chat/sessions/{id}", s.handleDeleteSession)
 		mux.HandleFunc("GET /api/chat/sessions/{id}/messages", s.handleGetMessages)
+	}
+	if s.approvalStore != nil {
+		mux.HandleFunc("GET /api/approvals/pending", s.handlePendingApprovals)
+		mux.HandleFunc("POST /api/approvals/{id}/approve", s.handleApproveAction)
+		mux.HandleFunc("POST /api/approvals/{id}/reject", s.handleRejectAction)
 	}
 	mux.HandleFunc("POST /api/upload", s.handleFileUpload)
 
@@ -265,6 +277,57 @@ func (s *Server) jsonResponse(w http.ResponseWriter, status int, data any) {
 	json.NewEncoder(w).Encode(data)
 }
 
+// --- Approval Handlers (Human-in-the-Loop) ---
+
+func (s *Server) handlePendingApprovals(w http.ResponseWriter, r *http.Request) {
+	username, _ := auth.UserFromContext(r.Context())
+	pending := s.approvalStore.GetPending(username)
+	s.jsonResponse(w, http.StatusOK, map[string]any{
+		"approvals": pending,
+		"count":     len(pending),
+	})
+}
+
+func (s *Server) handleApproveAction(w http.ResponseWriter, r *http.Request) {
+	username, _ := auth.UserFromContext(r.Context())
+	id := r.PathValue("id")
+	if id == "" {
+		s.jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "missing approval id"})
+		return
+	}
+	req, err := s.approvalStore.Approve(id, username)
+	if err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, map[string]any{
+		"status":      "approved",
+		"approval_id": req.ID,
+		"tool":        req.Tool,
+		"description": req.Description,
+	})
+}
+
+func (s *Server) handleRejectAction(w http.ResponseWriter, r *http.Request) {
+	username, _ := auth.UserFromContext(r.Context())
+	id := r.PathValue("id")
+	if id == "" {
+		s.jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "missing approval id"})
+		return
+	}
+	req, err := s.approvalStore.Reject(id, username)
+	if err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, map[string]any{
+		"status":      "rejected",
+		"approval_id": req.ID,
+		"tool":        req.Tool,
+		"description": req.Description,
+	})
+}
+
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -292,6 +355,10 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 // --- Auth handlers ---
 
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		s.jsonResponse(w, http.StatusServiceUnavailable, map[string]string{"error": "Authentication is not configured (no MongoDB)"})
+		return
+	}
 	var req struct {
 		Username string `json:"username"`
 		Email    string `json:"email"`
@@ -323,6 +390,10 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		s.jsonResponse(w, http.StatusServiceUnavailable, map[string]string{"error": "Authentication is not configured (no MongoDB)"})
+		return
+	}
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -349,6 +420,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		s.jsonResponse(w, http.StatusServiceUnavailable, map[string]string{"error": "Authentication is not configured (no MongoDB)"})
+		return
+	}
 	username, ok := auth.UserFromContext(r.Context())
 	if !ok {
 		s.jsonResponse(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
