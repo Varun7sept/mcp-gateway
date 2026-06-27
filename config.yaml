@@ -1,0 +1,43 @@
+# MCP Gateway Configuration
+# 8 servers with 20+ real tools
+
+gateway:
+  port: 8080
+  name: "MCP Gateway"
+
+mongodb:
+  uri: ""  # Set MONGO_URI env var in production
+  database: "mcp_gateway"
+
+servers:
+  - name: "weather"
+    url: "http://localhost:3001"
+    enabled: true
+
+  - name: "notes"
+    url: "http://localhost:3002"
+    enabled: true
+
+  - name: "github"
+    url: "http://localhost:3003"
+    enabled: true
+
+  - name: "crypto"
+    url: "http://localhost:3004"
+    enabled: true
+
+  - name: "news"
+    url: "http://localhost:3005"
+    enabled: true
+
+  - name: "url-tools"
+    url: "http://localhost:3006"
+    enabled: true
+
+  - name: "search"
+    url: "http://localhost:3007"
+    enabled: true
+
+  - name: "documents"
+    url: "http://localhost:3008"
+    enabled: true

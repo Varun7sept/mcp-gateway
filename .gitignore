@@ -1,0 +1,29 @@
+# Binaries
+mcp-gateway
+examples/*/crypto-server
+examples/*/news-server
+examples/*/search-server
+examples/*/url-server
+examples/*/weather-server
+examples/*/notes-server
+examples/*/github-server
+examples/*/docs-server
+examples/*/server
+
+# Database
+*.db
+*.sqlite3
+examples/docs-server/chroma_db/
+
+# OS files
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Environment
+.env
+
+# Temp
+tmp/

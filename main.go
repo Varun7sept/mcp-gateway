@@ -1,0 +1,83 @@
+package main
+
+import (
+	"log"
+	"os"
+	"time"
+
+	"github.com/varunbanda/mcp-gateway/internal/ai"
+	"github.com/varunbanda/mcp-gateway/internal/auth"
+	"github.com/varunbanda/mcp-gateway/internal/config"
+	"github.com/varunbanda/mcp-gateway/internal/gateway"
+	"github.com/varunbanda/mcp-gateway/internal/logger"
+	"github.com/varunbanda/mcp-gateway/internal/notes"
+	"github.com/varunbanda/mcp-gateway/internal/server"
+)
+
+func main() {
+	log.Println("Starting MCP Gateway...")
+
+	// Load configuration
+	cfg, err := config.Load("config.yaml")
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+	log.Printf("Loaded config: %d servers configured", len(cfg.Servers))
+
+	// Create the gateway
+	gw := gateway.New(cfg)
+	log.Printf("Gateway initialized with %d servers", len(gw.ListServers()))
+
+	// Create request logger (keeps last 1000 requests)
+	reqLogger := logger.New(1000)
+
+	// Create AI brain (optional — needs GROQ_API_KEY)
+	var brain *ai.Brain
+	groqKey := os.Getenv("GROQ_API_KEY")
+	if groqKey != "" {
+		brain = ai.New(groqKey)
+		log.Println("AI Chat enabled (Groq API)")
+	} else {
+		log.Println("AI Chat disabled (set GROQ_API_KEY to enable)")
+	}
+
+	// Create auth handler (MongoDB + JWT)
+	var authenticator *auth.Auth
+	if cfg.MongoDB.URI != "" {
+		var err error
+		authenticator, err = auth.New(auth.MongoConfig{
+			URI:      cfg.MongoDB.URI,
+			Database: cfg.MongoDB.Database,
+		})
+		if err != nil {
+			log.Printf("WARNING: MongoDB auth not available: %v", err)
+			log.Println("Proceeding without authentication...")
+		} else {
+			log.Println("MongoDB connected — authentication enabled")
+		}
+	} else {
+		log.Println("MongoDB not configured — authentication disabled")
+	}
+
+	// Start notes server (embedded — no separate process needed)
+	notesSrv, err := notes.New(":3002")
+	if err != nil {
+		log.Printf("WARNING: Notes server failed to start: %v", err)
+	} else {
+		go func() {
+			if err := notesSrv.Start(); err != nil {
+				log.Printf("Notes server exited: %v", err)
+			}
+		}()
+		defer notesSrv.Close()
+	}
+
+	// Start health checker (every 10 seconds)
+	gw.StartHealthChecker(10 * time.Second)
+
+	// Start HTTP server
+	srv := server.New(gw, reqLogger, brain, authenticator, cfg.Gateway.Port)
+	if err := srv.Start(); err != nil {
+		log.Fatalf("Server failed: %v", err)
+	}
+}
