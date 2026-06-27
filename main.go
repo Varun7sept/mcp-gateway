@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/varunbanda/mcp-gateway/internal/ai"
@@ -75,8 +76,14 @@ func main() {
 	// Start health checker (every 10 seconds)
 	gw.StartHealthChecker(10 * time.Second)
 
-	// Start HTTP server
-	srv := server.New(gw, reqLogger, brain, authenticator, cfg.Gateway.Port)
+	// Start HTTP server (use PORT env var for Fly.io/Railway compatibility)
+	port := cfg.Gateway.Port
+	if p := os.Getenv("PORT"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil {
+			port = n
+		}
+	}
+	srv := server.New(gw, reqLogger, brain, authenticator, port)
 	if err := srv.Start(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
