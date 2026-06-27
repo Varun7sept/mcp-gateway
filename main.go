@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"os/exec"
 	"strconv"
 	"time"
 
@@ -76,6 +77,14 @@ func main() {
 	startMCP("news", func() error { return mcpserver.StartNews(":3005") })
 	startMCP("url-tools", func() error { return mcpserver.StartURLTools(":3006") })
 	startMCP("search", func() error { return mcpserver.StartSearch(":3007") })
+
+	// Start Python RAG server (ChromaDB + Flask)
+	startMCP("documents", func() error {
+		cmd := exec.Command("python3", "examples/docs-server/server.py")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	})
 
 	// Start health checker (every 10 seconds)
 	gw.StartHealthChecker(10 * time.Second)

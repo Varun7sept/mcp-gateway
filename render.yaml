@@ -1,9 +1,7 @@
 services:
   - type: web
     name: mcp-gateway
-    env: go
-    buildCommand: go build -o mcp-gateway
-    startCommand: ./mcp-gateway
+    env: docker
     autoDeploy: true
     envVars:
       - key: MONGO_URI
