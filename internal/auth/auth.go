@@ -21,8 +21,10 @@ type User struct {
 }
 
 type Auth struct {
-	users     *mongo.Collection
-	jwtSecret []byte
+	users       *mongo.Collection
+	requestLogs *mongo.Collection
+	jwtSecret   []byte
+	db          *mongo.Database
 }
 
 type MongoConfig struct {
@@ -48,9 +50,13 @@ func New(mCfg MongoConfig) (*Auth, error) {
 		secret = "mcp-gateway-secret-change-in-production"
 	}
 
+	db := client.Database(mCfg.Database)
+
 	a := &Auth{
-		users:     client.Database(mCfg.Database).Collection("users"),
-		jwtSecret: []byte(secret),
+		users:       db.Collection("users"),
+		requestLogs: db.Collection("request_logs"),
+		jwtSecret:   []byte(secret),
+		db:          db,
 	}
 
 	if err := a.ensureIndexes(ctx); err != nil {
@@ -61,9 +67,15 @@ func New(mCfg MongoConfig) (*Auth, error) {
 }
 
 func (a *Auth) ensureIndexes(ctx context.Context) error {
-	_, err := a.users.Indexes().CreateMany(ctx, []mongo.IndexModel{
+	if _, err := a.users.Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{Keys: bson.D{{Key: "username", Value: 1}}, Options: options.Index().SetUnique(true)},
 		{Keys: bson.D{{Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)},
+	}); err != nil {
+		return err
+	}
+	_, err := a.requestLogs.Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "username", Value: 1}, {Key: "created_at", Value: -1}}},
+		{Keys: bson.D{{Key: "created_at", Value: -1}}},
 	})
 	return err
 }
@@ -140,6 +152,155 @@ func (a *Auth) GetUser(username string) (*User, error) {
 		return nil, fmt.Errorf("user not found")
 	}
 	return &user, nil
+}
+
+// LogRequest stores a request log entry in MongoDB.
+func (a *Auth) LogRequest(username, method, toolName, serverName, status, errMsg string, latency time.Duration) {
+	ctx := context.Background()
+	a.requestLogs.InsertOne(ctx, bson.M{
+		"username":    username,
+		"method":      method,
+		"tool_name":   toolName,
+		"server_name": serverName,
+		"status":      status,
+		"error":       errMsg,
+		"latency_ms":  latency.Milliseconds(),
+		"created_at":  time.Now(),
+	})
+}
+
+// RequestLogEntry represents a stored request log.
+type RequestLogEntry struct {
+	Username   string    `json:"username"`
+	Method     string    `json:"method"`
+	ToolName   string    `json:"tool_name"`
+	ServerName string    `json:"server_name"`
+	Status     string    `json:"status"`
+	Error      string    `json:"error,omitempty"`
+	LatencyMs  int64     `json:"latency_ms"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// GetRequestStats returns aggregate stats for a user from MongoDB.
+// Pass empty username to get global stats.
+func (a *Auth) GetRequestStats(username string) map[string]any {
+	ctx := context.Background()
+	match := bson.M{}
+	if username != "" {
+		match = bson.M{"username": username}
+	}
+
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: match}},
+		{{Key: "$group", Value: bson.M{
+			"_id":           nil,
+			"total_requests": bson.M{"$sum": 1},
+			"success_count":  bson.M{"$sum": bson.M{"$cond": []any{bson.M{"$eq": []string{"$status", "success"}}, 1, 0}}},
+			"error_count":    bson.M{"$sum": bson.M{"$cond": []any{bson.M{"$eq": []string{"$status", "error"}}, 1, 0}}},
+			"avg_latency":    bson.M{"$avg": "$latency_ms"},
+		}}},
+	}
+
+	cursor, err := a.requestLogs.Aggregate(ctx, pipeline)
+	if err != nil {
+		return map[string]any{
+			"total_requests": 0, "success_count": 0, "error_count": 0, "avg_latency_ms": 0,
+			"requests_by_tool": map[string]int{}, "requests_by_server": map[string]int{},
+		}
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+
+	stats := map[string]any{
+		"total_requests":    0,
+		"success_count":     0,
+		"error_count":       0,
+		"avg_latency_ms":    0,
+		"requests_by_tool":  map[string]int{},
+		"requests_by_server": map[string]int{},
+	}
+	if len(results) > 0 {
+		r := results[0]
+		if v, ok := r["total_requests"]; ok { stats["total_requests"] = v }
+		if v, ok := r["success_count"]; ok { stats["success_count"] = v }
+		if v, ok := r["error_count"]; ok { stats["error_count"] = v }
+		if v, ok := r["avg_latency"]; ok { stats["avg_latency_ms"] = v }
+	}
+
+	// Per-tool breakdown
+	toolPipe := mongo.Pipeline{
+		{{Key: "$match", Value: match}},
+		{{Key: "$group", Value: bson.M{
+			"_id":   "$tool_name",
+			"count": bson.M{"$sum": 1},
+		}}},
+	}
+	if tc, err := a.requestLogs.Aggregate(ctx, toolPipe); err == nil {
+		var tres []bson.M
+		tc.All(ctx, &tres)
+		tmap := map[string]int{}
+		for _, r := range tres {
+			if name, ok := r["_id"].(string); ok && name != "" {
+				if c, ok := r["count"].(int32); ok { tmap[name] = int(c) }
+			}
+		}
+		stats["requests_by_tool"] = tmap
+	}
+
+	// Per-server breakdown
+	serverPipe := mongo.Pipeline{
+		{{Key: "$match", Value: match}},
+		{{Key: "$group", Value: bson.M{
+			"_id":   "$server_name",
+			"count": bson.M{"$sum": 1},
+		}}},
+	}
+	if sc, err := a.requestLogs.Aggregate(ctx, serverPipe); err == nil {
+		var sres []bson.M
+		sc.All(ctx, &sres)
+		smap := map[string]int{}
+		for _, r := range sres {
+			if name, ok := r["_id"].(string); ok && name != "" {
+				if c, ok := r["count"].(int32); ok { smap[name] = int(c) }
+			}
+		}
+		stats["requests_by_server"] = smap
+	}
+
+	return stats
+}
+
+// RecentLogs returns the last N log entries for a user from MongoDB.
+func (a *Auth) RecentLogs(n int, username string) []RequestLogEntry {
+	ctx := context.Background()
+	filter := bson.M{}
+	if username != "" {
+		filter = bson.M{"username": username}
+	}
+	cursor, err := a.requestLogs.Find(ctx, filter,
+		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(int64(n)))
+	if err != nil {
+		return nil
+	}
+	var raw []bson.M
+	cursor.All(ctx, &raw)
+	entries := make([]RequestLogEntry, 0, len(raw))
+	for _, r := range raw {
+		e := RequestLogEntry{
+			Username:   getStr(r, "username"),
+			Method:     getStr(r, "method"),
+			ToolName:   getStr(r, "tool_name"),
+			ServerName: getStr(r, "server_name"),
+			Status:     getStr(r, "status"),
+			Error:      getStr(r, "error"),
+			CreatedAt:  getTime(r, "created_at"),
+		}
+		if v, ok := r["latency_ms"]; ok {
+			if n, ok := v.(int64); ok { e.LatencyMs = n }
+		}
+		entries = append(entries, e)
+	}
+	return entries
 }
 
 func (a *Auth) generateToken(username string) (string, error) {

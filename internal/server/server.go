@@ -129,6 +129,17 @@ func (s *Server) handleListTools(w http.ResponseWriter, r *http.Request) {
 // handleLogs returns recent request logs for the current user.
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	username, _ := auth.UserFromContext(r.Context())
+
+	// Use MongoDB for historical logs when auth is enabled
+	if s.auth != nil {
+		logs := s.auth.RecentLogs(50, username)
+		s.jsonResponse(w, http.StatusOK, map[string]any{
+			"logs":  logs,
+			"count": len(logs),
+		})
+		return
+	}
+
 	logs := s.logger.Recent(50, username)
 	s.jsonResponse(w, http.StatusOK, map[string]any{
 		"logs":  logs,
@@ -139,6 +150,14 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 // handleStats returns aggregate statistics for the current user.
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	username, _ := auth.UserFromContext(r.Context())
+
+	// Use MongoDB for historical stats when auth is enabled
+	if s.auth != nil {
+		stats := s.auth.GetRequestStats(username)
+		s.jsonResponse(w, http.StatusOK, stats)
+		return
+	}
+
 	stats := s.logger.GetStats(username)
 	s.jsonResponse(w, http.StatusOK, stats)
 }
@@ -161,7 +180,11 @@ func (s *Server) handleMCPMessage(w http.ResponseWriter, r *http.Request) {
 	// tools/list → return aggregated tools
 	if request.Method == "tools/list" {
 		tools := s.gateway.ListTools()
-		s.logger.Log("tools/list", "", "", username, "success", "", time.Since(start))
+		latency := time.Since(start)
+		s.logger.Log("tools/list", "", "", username, "success", "", latency)
+		if s.auth != nil {
+			s.auth.LogRequest(username, "tools/list", "", "", "success", "", latency)
+		}
 		s.jsonResponse(w, http.StatusOK, MCPResponse{
 			JSONRPC: "2.0",
 			ID:      request.ID,
@@ -191,6 +214,9 @@ func (s *Server) handleMCPMessage(w http.ResponseWriter, r *http.Request) {
 
 		if err != nil {
 			s.logger.Log("tools/call", toolName, "", username, "error", err.Error(), latency)
+			if s.auth != nil {
+				s.auth.LogRequest(username, "tools/call", toolName, "", "error", err.Error(), latency)
+			}
 			s.jsonResponse(w, http.StatusBadGateway, map[string]string{
 				"error": err.Error(),
 			})
@@ -198,6 +224,9 @@ func (s *Server) handleMCPMessage(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.logger.Log("tools/call", toolName, result.ServerName, username, "success", "", latency)
+		if s.auth != nil {
+			s.auth.LogRequest(username, "tools/call", toolName, result.ServerName, "success", "", latency)
+		}
 		s.jsonResponse(w, http.StatusOK, result.Response)
 		return
 	}

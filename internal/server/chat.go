@@ -119,9 +119,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// Store AI response with tool metadata
 	meta := map[string]any{}
 	var toolsUsed []string
+	chatLatency := time.Since(start)
 	for _, step := range orchResult.Steps {
 		toolsUsed = append(toolsUsed, step.ToolName)
 		s.logger.Log("agent", step.ToolName, "", username, "success", "", 0)
+		if s.auth != nil {
+			s.auth.LogRequest(username, "agent", step.ToolName, "", "success", "", 0)
+		}
 	}
 	meta["tools"] = toolsUsed
 	meta["latency"] = time.Since(start).Milliseconds()
@@ -133,7 +137,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		chatStore.AddMessage(req.SessionID, "ai", orchResult.Answer, meta)
 	}
 
-	s.logger.Log("chat", "", "", username, "success", "", time.Since(start))
+	s.logger.Log("chat", "", "", username, "success", "", chatLatency)
+	if s.auth != nil {
+		s.auth.LogRequest(username, "chat", "", "", "success", "", chatLatency)
+	}
 
 	numTasks := 0
 	if orchResult.Plan != nil {

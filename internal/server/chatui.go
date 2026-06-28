@@ -190,24 +190,68 @@ const chatPageHTML = `<!DOCTYPE html>
         function getToken() { return localStorage.getItem('mcp_token'); }
         function authHeaders() { return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() }; }
 
-        // ===== State Management (server-backed) =====
+        // ===== State Management (localStorage-backed) =====
+        function generateId() { return 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8); }
+
+        function getStoredMessages() {
+            try { return JSON.parse(localStorage.getItem('chat_messages') || '{}'); } catch { return {}; }
+        }
+        function saveStoredMessages(store) {
+            localStorage.setItem('chat_messages', JSON.stringify(store));
+        }
+        function getLocalSessions() {
+            try { return JSON.parse(localStorage.getItem('local_sessions') || '[]'); } catch { return []; }
+        }
+        function saveLocalSessions(list) {
+            localStorage.setItem('local_sessions', JSON.stringify(list));
+        }
+        function getLocalTitle(id) {
+            const msgs = messageStore[id] || [];
+            if (msgs.length === 0) return 'New Chat';
+            const first = msgs.find(m => m.role === 'user');
+            if (!first) return 'New Chat';
+            const t = first.content;
+            return t.length > 50 ? t.slice(0, 50) + '...' : t;
+        }
+
         let sessions = [];
-        let currentSessionId = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        let localSessions = getLocalSessions();
+        let messageStore = getStoredMessages();
+        let currentSessionId = localStorage.getItem('local_session_id') || generateId();
+        localStorage.setItem('local_session_id', currentSessionId);
+
+        function _buildAllSessions() {
+            const serverIds = new Set(sessions.map(s => s.id));
+            const local = localSessions
+                .filter(s => !serverIds.has(s.id))
+                .map(s => ({...s, _local: true, title: getLocalTitle(s.id)}));
+            return [...sessions, ...local];
+        }
 
         async function loadSessionsFromServer() {
             try {
                 const resp = await fetch('/api/chat/sessions', { headers: authHeaders() });
                 if (resp.status === 401) { window.location.href = '/'; return; }
-                if (resp.status === 404 || resp.status === 405) { return; }
+                if (resp.status === 404 || resp.status === 405) {
+                    _syncLocalSidebar();
+                    return;
+                }
                 const data = await resp.json();
                 sessions = data.sessions || [];
-                renderSidebar();
-                if (sessions.length > 0) {
-                    if (!sessions.find(s => s.id === currentSessionId)) {
-                        switchSession(sessions[0].id);
-                    }
+                _syncLocalSidebar();
+            } catch { sessions = []; _syncLocalSidebar(); }
+        }
+
+        function _syncLocalSidebar() {
+            const all = _buildAllSessions();
+            renderSidebar(all);
+            if (all.length > 0) {
+                if (!all.find(s => s.id === currentSessionId)) {
+                    switchSession(all[0].id);
                 }
-            } catch { sessions = []; }
+            } else {
+                _newLocalSession();
+            }
         }
 
         async function createNewSession() {
@@ -219,84 +263,117 @@ const chatPageHTML = `<!DOCTYPE html>
                 });
                 if (resp.status === 401) { window.location.href = '/'; return; }
                 if (resp.status === 404 || resp.status === 405) {
-                    currentSessionId = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+                    _newLocalSession();
                     return;
                 }
                 const session = await resp.json();
                 sessions.unshift(session);
-                renderSidebar();
+                _syncLocalSidebar();
                 switchSession(session.id);
             } catch {}
         }
 
+        function _newLocalSession() {
+            currentSessionId = generateId();
+            localStorage.setItem('local_session_id', currentSessionId);
+            localSessions.unshift({id: currentSessionId, title: 'New Chat', created_at: new Date().toISOString()});
+            saveLocalSessions(localSessions);
+            if (!messageStore[currentSessionId]) messageStore[currentSessionId] = [];
+            saveStoredMessages(messageStore);
+            _syncLocalSidebar();
+            _renderLocalMessages();
+        }
+
         function newSession() {
-            currentSessionId = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+            _newLocalSession();
         }
 
         async function switchSession(id) {
             currentSessionId = id;
-            renderSidebar();
+            localStorage.setItem('local_session_id', currentSessionId);
             await loadMessages(id);
         }
 
         async function deleteSession(id, e) {
             e.stopPropagation();
+            // Try server
             try {
                 await fetch('/api/chat/sessions/' + id, { method: 'DELETE', headers: authHeaders() });
-                sessions = sessions.filter(s => s.id !== id);
-                renderSidebar();
-                if (currentSessionId === id) {
-                    if (sessions.length > 0) switchSession(sessions[0].id);
-                    else createNewSession();
-                }
             } catch {}
+            // Remove locally
+            sessions = sessions.filter(s => s.id !== id);
+            localSessions = localSessions.filter(s => s.id !== id);
+            saveLocalSessions(localSessions);
+            delete messageStore[id];
+            saveStoredMessages(messageStore);
+            _syncLocalSidebar();
+            const all = _buildAllSessions();
+            if (currentSessionId === id) {
+                if (all.length > 0) switchSession(all[0].id);
+                else _newLocalSession();
+            }
         }
 
         async function loadMessages(id) {
             const container = document.getElementById('chat-container');
             const welcome = document.getElementById('welcome');
 
+            // Try server first
             try {
                 const resp = await fetch('/api/chat/sessions/' + id + '/messages', { headers: authHeaders() });
                 if (resp.status === 401) { window.location.href = '/'; return; }
-                if (resp.status === 404 || resp.status === 405) {
-                    welcome.style.display = 'block';
-                    return;
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const msgs = data.messages || [];
+                    if (msgs.length > 0) {
+                        messageStore[id] = msgs.map(m => ({role: m.role, content: m.content, meta: m.meta}));
+                        saveStoredMessages(messageStore);
+                    }
                 }
-                const data = await resp.json();
-                const messages = data.messages || [];
+            } catch {}
 
-                if (messages.length === 0) {
-                    welcome.style.display = 'block';
-                    container.innerHTML = '';
-                    container.appendChild(welcome);
-                    return;
-                }
-
+            // Fallback to local storage
+            const localMsgs = messageStore[id] || [];
+            if (localMsgs.length > 0) {
                 welcome.style.display = 'none';
                 container.innerHTML = '';
-                messages.forEach(m => {
-                    addMessageToDOM(m.content, m.role, m.meta);
-                });
+                localMsgs.forEach(m => addMessageToDOM(m.content, m.role, m.meta));
                 scrollToBottom();
-            } catch {
+                return;
+            }
+
+            welcome.style.display = 'block';
+            container.innerHTML = '';
+            container.appendChild(welcome);
+        }
+
+        // ===== Rendering =====
+        function renderSidebar(allSessions) {
+            const list = document.getElementById('sessions-list');
+            list.innerHTML = (allSessions || _buildAllSessions()).map(s => {
+                const active = s.id === currentSessionId ? ' active' : '';
+                const time = s.created_at ? new Date(s.created_at).toLocaleDateString() : '';
+                return '<div class="session-item' + active + '" onclick="switchSession(\'' + s.id + '\')">' +
+                    '<div><div class="title">' + escapeHtml(s.title || 'Chat') + '</div><div class="time">' + time + '</div></div>' +
+                    '<span class="delete-btn" onclick="deleteSession(\'' + s.id + '\', event)">&times;</span>' +
+                '</div>';
+            }).join('');
+        }
+
+        function _renderLocalMessages() {
+            const container = document.getElementById('chat-container');
+            const welcome = document.getElementById('welcome');
+            const msgs = messageStore[currentSessionId] || [];
+            if (msgs.length > 0) {
+                welcome.style.display = 'none';
+                container.innerHTML = '';
+                msgs.forEach(m => addMessageToDOM(m.content, m.role, m.meta));
+                scrollToBottom();
+            } else {
                 welcome.style.display = 'block';
                 container.innerHTML = '';
                 container.appendChild(welcome);
             }
-        }
-
-        // ===== Rendering =====
-        function renderSidebar() {
-            const list = document.getElementById('sessions-list');
-            list.innerHTML = sessions.map(s => {
-                const active = s.id === currentSessionId ? ' active' : '';
-                const time = new Date(s.created_at).toLocaleDateString();
-                return '<div class="session-item' + active + '" onclick="switchSession(\'' + s.id + '\')">' +
-                    '<div><div class="title">' + escapeHtml(s.title) + '</div><div class="time">' + time + '</div></div>' +
-                    '<span class="delete-btn" onclick="deleteSession(\'' + s.id + '\', event)">&times;</span>' +
-                '</div>';
-            }).join('');
         }
 
         function addMessageToDOM(text, role, meta) {
@@ -345,6 +422,9 @@ const chatPageHTML = `<!DOCTYPE html>
             if (!approvalId) {
                 addMessageToDOM(msg, 'user');
                 document.getElementById('user-input').value = '';
+                if (!messageStore[currentSessionId]) messageStore[currentSessionId] = [];
+                messageStore[currentSessionId].push({role: 'user', content: msg});
+                saveStoredMessages(messageStore);
             }
 
             document.getElementById('send-btn').disabled = true;
@@ -377,6 +457,9 @@ const chatPageHTML = `<!DOCTYPE html>
                 const meta = data.error ? {} : { tools: data.tools_used, steps: data.steps, latency: data.latency, num_tasks: data.num_tasks };
                 const answer = data.error ? 'Error: ' + data.error : data.answer;
                 addMessageToDOM(answer, 'ai', meta);
+                if (!messageStore[currentSessionId]) messageStore[currentSessionId] = [];
+                messageStore[currentSessionId].push({role: 'ai', content: answer, meta: meta});
+                saveStoredMessages(messageStore);
 
                 // Reload sidebar to get updated title
                 try {
@@ -385,6 +468,14 @@ const chatPageHTML = `<!DOCTYPE html>
                         const sdata = await sresp.json();
                         sessions = sdata.sessions || [];
                         renderSidebar();
+                    } else {
+                        // Update local session title
+                        const idx = localSessions.findIndex(s => s.id === currentSessionId);
+                        if (idx >= 0) {
+                            localSessions[idx].title = getLocalTitle(currentSessionId);
+                            saveLocalSessions(localSessions);
+                            renderSidebar();
+                        }
                     }
                 } catch {}
             } catch (e) {
@@ -534,7 +625,8 @@ var codeBlockRE = new RegExp(bt+'([^]*?)'+bt, 'g');
         // ===== Init =====
         document.getElementById('user-input').addEventListener('keydown', e => { if (e.key === 'Enter' && !document.getElementById('send-btn').disabled) sendMessage(); });
 
-        // Load sessions from server
+        // Restore local messages first, then try server
+        _renderLocalMessages();
         loadSessionsFromServer();
     </script>
 </body>
