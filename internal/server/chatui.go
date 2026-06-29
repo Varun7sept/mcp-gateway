@@ -121,6 +121,10 @@ const chatPageHTML = `<!DOCTYPE html>
         @media (max-width: 768px) {
             .sidebar { display: none; }
             .message .bubble { max-width: 85%; }
+            body { overflow: auto; height: 100%; }
+            .main { height: 100vh; min-height: 0; }
+            .chat-container { flex: 1; min-height: 0; }
+            .input-area { position: sticky; bottom: 0; z-index: 10; flex-shrink: 0; }
         }
     </style>
 </head>
@@ -189,6 +193,15 @@ const chatPageHTML = `<!DOCTYPE html>
         // ===== Auth =====
         function getToken() { return localStorage.getItem('mcp_token'); }
         function authHeaders() { return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() }; }
+        function clearChatStorage() {
+            localStorage.removeItem('chat_messages');
+            localStorage.removeItem('local_sessions');
+            localStorage.removeItem('local_session_id');
+        }
+        function redirectToLogin() {
+            clearChatStorage();
+            window.location.href = '/';
+        }
 
         // ===== State Management (localStorage-backed) =====
         function generateId() { return 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8); }
@@ -235,7 +248,7 @@ const chatPageHTML = `<!DOCTYPE html>
         async function loadSessionsFromServer() {
             try {
                 const resp = await fetch('/api/chat/sessions', { headers: authHeaders() });
-                if (resp.status === 401) { window.location.href = '/'; return; }
+                if (resp.status === 401) { redirectToLogin(); return; }
                 if (resp.status === 404 || resp.status === 405) {
                     _serverAvailable = false;
                     _syncLocalSidebar();
@@ -288,7 +301,7 @@ const chatPageHTML = `<!DOCTYPE html>
                     headers: authHeaders(),
                     body: JSON.stringify({ title: 'New Chat' })
                 });
-                if (resp.status === 401) { window.location.href = '/'; return; }
+                if (resp.status === 401) { redirectToLogin(); return; }
                 if (resp.status === 404 || resp.status === 405) {
                     _newLocalSession();
                     return;
@@ -339,7 +352,7 @@ const chatPageHTML = `<!DOCTYPE html>
             // Try server first
             try {
                 const resp = await fetch('/api/chat/sessions/' + id + '/messages', { headers: authHeaders() });
-                if (resp.status === 401) { window.location.href = '/'; return; }
+                if (resp.status === 401) { redirectToLogin(); return; }
                 if (resp.ok) {
                     const data = await resp.json();
                     const msgs = data.messages || [];
@@ -472,7 +485,7 @@ const chatPageHTML = `<!DOCTYPE html>
                     headers: authHeaders(),
                     body: JSON.stringify(body)
                 });
-                if (resp.status === 401) { window.location.href = '/'; return; }
+                if (resp.status === 401) { redirectToLogin(); return; }
                 const data = await resp.json();
 
                 document.getElementById('typing').style.display = 'none';
@@ -616,7 +629,7 @@ const chatPageHTML = `<!DOCTYPE html>
                     headers: {'Authorization': 'Bearer ' + getToken()},
                     body: (() => { const fd = new FormData(); fd.append('file', file); fd.append('name', file.name.replace(/\.[^.]+$/, '')); return fd; })()
                 });
-                if (resp.status === 401) { window.location.href = '/'; return; }
+                if (resp.status === 401) { redirectToLogin(); return; }
                 const data = await resp.json();
                 if (data.error) {
                     statusEl.style.color = '#ef4444'; statusEl.textContent = 'Error: ' + data.error;
