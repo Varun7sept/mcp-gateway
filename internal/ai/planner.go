@@ -3,6 +3,7 @@ package ai
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 )
 
@@ -43,11 +44,12 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 				"2. Use 'depends_on' to express ordering (tasks that depend on others must wait)\n" +
 				"3. Each task must specify exactly ONE tool to call\n" +
 				"4. If no tools are needed (simple Q&A), return an empty tasks array\n" +
-				"5. For multi-part questions like 'weather in London and Paris', create separate tasks for each\n" +
-				"6. For 'search and summarize' requests, create ONE search task. The summarization will be done automatically.\n" +
-				"7. CHOOSE ONLY ONE search-style tool per search intent. Example: for 'AI news' use EITHER search_news OR web_search, not both. Pick just one.\n" +
-				"8. MAXIMUM 3 TASKS TOTAL. Be focused and efficient.\n" +
-				"9. NEVER create tasks for both search_news AND web_search with similar queries. Pick exactly one.\n" +
+				"5. If a task depends on another task's result, reference it using ${result:N} syntax where N is the task ID. Do NOT use {placeholder} or other formats.\n" +
+				"6. For multi-part questions like 'weather in London and Paris', create separate tasks for each\n" +
+				"7. For 'search and summarize' requests, create ONE search task. The summarization will be done automatically.\n" +
+				"8. CHOOSE ONLY ONE search-style tool per search intent. Example: for 'AI news' use EITHER search_news OR web_search, not both. Pick just one.\n" +
+				"9. MAXIMUM 3 TASKS TOTAL. Be focused and efficient.\n" +
+				"10. NEVER create tasks for both search_news AND web_search with similar queries. Pick exactly one.\n" +
 				"Available tools: get_weather, get_forecast, get_user, list_repos, get_repo, add_note, list_notes, " +
 				"search_notes, get_crypto_price, get_top_cryptos, get_top_news, search_news, " +
 				"shorten_url, generate_qr, expand_url, web_search, wikipedia_summary, " +
@@ -89,7 +91,16 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 		return nil, fmt.Errorf("failed to parse plan JSON: %w\nRaw: %s", err, content)
 	}
 
+	log.Printf("[PLANNER] Raw response: %s", content)
+	log.Printf("[PLANNER] Tasks before filter: %d", len(plan.Tasks))
+	for _, t := range plan.Tasks {
+		argsJSON, _ := json.Marshal(t.Arguments)
+		log.Printf("[PLANNER]   Task %d: tool=%s args=%s", t.ID, t.Tool, string(argsJSON))
+	}
+
 	searchTools := map[string]bool{"search_news": true, "web_search": true, "wikipedia_summary": true}
+	coinAliases := map[string]string{"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "xrp", "DOGE": "dogecoin", "ADA": "cardano", "DOT": "polkadot", "LINK": "chainlink", "AVAX": "avalanche-2", "MATIC": "matic-network"}
+	requiredArgs := map[string][]string{"add_note": {"title", "content"}, "get_crypto_price": {"coin"}, "get_weather": {"location"}, "get_forecast": {"location"}, "get_repo": {"owner", "repo"}, "get_user": {"username"}, "list_repos": {"username"}, "search_news": {"query"}, "web_search": {"query"}, "wikipedia_summary": {"query"}, "shorten_url": {"url"}, "upload_document": {"file"}}
 	seenSearch := map[string]bool{}
 	var filtered []struct {
 		ID           int            `json:"id"`
@@ -102,14 +113,70 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 		if t.Tool == "" {
 			continue
 		}
+
+		if t.Arguments == nil {
+			t.Arguments = map[string]any{}
+		}
+
+		// Normalize common argument key aliases (model often uses wrong keys)
+		argAliases := map[string]map[string]string{
+			"get_crypto_price": {"symbol": "coin", "coin_name": "coin", "crypto": "coin"},
+			"add_note":         {"note": "content", "text": "content", "body": "content", "name": "title"},
+		}
+		if aliases, ok := argAliases[t.Tool]; ok {
+			for wrongKey, rightKey := range aliases {
+				if v, exists := t.Arguments[wrongKey]; exists {
+					if _, already := t.Arguments[rightKey]; !already {
+						t.Arguments[rightKey] = v
+					}
+					delete(t.Arguments, wrongKey)
+				}
+			}
+		}
+
+		// Normalize coin ticker symbols to full names
+		if t.Tool == "get_crypto_price" {
+			if v, ok := t.Arguments["coin"].(string); ok {
+				if normalized, found := coinAliases[strings.ToUpper(v)]; found {
+					t.Arguments["coin"] = normalized
+				}
+			}
+		}
+
+		// Auto-populate missing required args where possible
+		if t.Tool == "add_note" {
+			if _, has := t.Arguments["title"]; !has {
+				t.Arguments["title"] = t.Description
+			}
+		}
+
+		// Validate required args are present and non-empty
+		if reqs, ok := requiredArgs[t.Tool]; ok {
+			missing := false
+			for _, arg := range reqs {
+				v, has := t.Arguments[arg]
+				if !has {
+					missing = true
+					break
+				}
+				if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
+					missing = true
+					break
+				}
+			}
+			if missing {
+				continue
+			}
+		}
+
 		if searchTools[t.Tool] {
 			q, _ := t.Arguments["query"].(string)
 			if q == "" {
-				continue // skip search tasks with no query
+				continue
 			}
 			key := t.Tool + ":" + q
 			if seenSearch[key] {
-				continue // deduplicate same tool+query
+				continue
 			}
 			seenSearch[key] = true
 		}
@@ -118,6 +185,8 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 	if len(filtered) > 3 {
 		filtered = filtered[:3]
 	}
+
+	log.Printf("[PLANNER] Tasks after filter: %d", len(filtered))
 
 	result := &Plan{Goal: goal}
 	for _, t := range filtered {

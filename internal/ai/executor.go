@@ -3,9 +3,13 @@ package ai
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"regexp"
 	"strings"
 	"sync"
 )
+
+var templateRe = regexp.MustCompile(`\$\{result:(\d+)\}`)
 
 const maxRetries = 2
 
@@ -34,7 +38,13 @@ func (b *Brain) ExecutePlan(plan *Plan, callTool func(name string, args map[stri
 
 			go func(t *TaskDefinition) {
 				defer wg.Done()
-				result, err := b.executeWithRetry(t, callTool)
+				resolver := func(taskID int) string {
+					if dep, ok := taskMap[taskID]; ok && dep.Status == TaskDone {
+						return dep.Result
+					}
+					return ""
+				}
+				result, err := b.executeWithRetry(t, callTool, resolver)
 				if err != nil {
 					t.Status = TaskFailed
 					t.Error = err.Error()
@@ -71,7 +81,9 @@ func (b *Brain) ExecutePlan(plan *Plan, callTool func(name string, args map[stri
 	return report
 }
 
-func (b *Brain) executeWithRetry(task *TaskDefinition, callTool func(name string, args map[string]any) (string, error)) (string, error) {
+func (b *Brain) executeWithRetry(task *TaskDefinition, callTool func(name string, args map[string]any) (string, error), resolver func(int) string) (string, error) {
+	normalizeArgs(task.Tool, task.Arguments)
+	resolveTemplates(task.Arguments, resolver)
 	result, err := callTool(task.Tool, task.Arguments)
 	if err == nil {
 		return result, nil
@@ -107,12 +119,104 @@ type alternativeAction struct {
 	Description string
 }
 
+var coinAliases = map[string]string{"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "xrp", "DOGE": "dogecoin", "ADA": "cardano", "DOT": "polkadot", "LINK": "chainlink", "AVAX": "avalanche-2", "MATIC": "matic-network"}
+
+func resolveTemplates(args map[string]any, resolver func(int) string) {
+	if args == nil || resolver == nil {
+		return
+	}
+	for k, v := range args {
+		s, ok := v.(string)
+		if !ok {
+			continue
+		}
+		matches := templateRe.FindAllStringSubmatch(s, -1)
+		if matches != nil {
+			log.Printf("[EXECUTOR]   resolving ${result:N} templates in arg %q: %q", k, s)
+			resolved := s
+			for _, m := range matches {
+				id := 0
+				fmt.Sscanf(m[1], "%d", &id)
+				replacement := resolver(id)
+				short := replacement
+				if len(short) > 100 { short = short[:100] }
+				log.Printf("[EXECUTOR]     template %q -> task %d: %q", m[0], id, short)
+				if replacement != "" {
+					resolved = strings.ReplaceAll(resolved, m[0], replacement)
+				}
+			}
+			s = resolved
+		}
+		// Fallback: replace {placeholder} — find the first non-empty dependency result and use it for all {…} patterns
+		if strings.Contains(s, "{") && strings.Contains(s, "}") {
+			log.Printf("[EXECUTOR]   resolving {placeholder} in arg %q: %q", k, s)
+			var depResult string
+			for i := 0; i < 10; i++ {
+				if r := resolver(i); r != "" {
+					depResult = r
+					break
+				}
+			}
+			if depResult != "" {
+				s = strings.ReplaceAll(s, "{Bitcoin price}", depResult)
+				s = strings.ReplaceAll(s, "{Ethereum price}", depResult)
+				// Generic fallback: replace any remaining {text} with dep result
+				for strings.Contains(s, "{") && strings.Contains(s, "}") {
+					start := strings.Index(s, "{")
+					end := strings.Index(s, "}")
+					if start == -1 || end == -1 || end <= start {
+						break
+					}
+					s = s[:start] + depResult + s[end+1:]
+				}
+			}
+		}
+		args[k] = s
+		log.Printf("[EXECUTOR]   final arg %q: %q", k, args[k])
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func normalizeArgs(tool string, args map[string]any) {
+	if args == nil {
+		return
+	}
+	argAliases := map[string]map[string]string{
+		"get_crypto_price": {"symbol": "coin", "coin_name": "coin", "crypto": "coin"},
+		"add_note":         {"note": "content", "text": "content", "body": "content", "name": "title"},
+	}
+	if aliases, ok := argAliases[tool]; ok {
+		for wrongKey, rightKey := range aliases {
+			if v, exists := args[wrongKey]; exists {
+				if _, already := args[rightKey]; !already {
+					args[rightKey] = v
+				}
+				delete(args, wrongKey)
+			}
+		}
+	}
+	if tool == "get_crypto_price" {
+		if v, ok := args["coin"].(string); ok {
+			if normalized, found := coinAliases[strings.ToUpper(v)]; found {
+				args["coin"] = normalized
+			}
+		}
+	}
+}
+
 func (b *Brain) suggestAlternative(task *TaskDefinition, errMsg string) (*alternativeAction, error) {
 	messages := []Message{
 		{
 			Role: "system",
 			Content: "A tool call failed. Suggest an alternative approach to accomplish the same goal. " +
 				"If the error is 'not found' or 'invalid input', try with different input. " +
+				"IMPORTANT: Use full coin names not tickers (bitcoin not BTC, ethereum not ETH). " +
 				"If no alternative exists, respond with: {\"alternative\":false}\n" +
 				"Otherwise respond with JSON: {\"alternative\":true,\"tool\":\"tool_name\",\"arguments\":{...},\"description\":\"...\"}",
 		},
@@ -147,6 +251,7 @@ func (b *Brain) suggestAlternative(task *TaskDefinition, errMsg string) (*altern
 	if err := parseJSON([]byte(content), &resp); err != nil || !resp.Alternative || resp.Tool == "" {
 		return nil, nil
 	}
+	normalizeArgs(resp.Tool, resp.Arguments)
 	return &alternativeAction{
 		Tool:        resp.Tool,
 		Arguments:   resp.Arguments,
