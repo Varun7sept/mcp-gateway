@@ -55,7 +55,10 @@ func handleSearchTool(w http.ResponseWriter, req MCPRequest) {
 
 func duckDuckGo(query string) (string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("https://api.duckduckgo.com/?q=%s&format=json&no_html=1&skip_disambig=1", url.QueryEscape(query)))
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.duckduckgo.com/?q=%s&format=json&no_html=1&skip_disambig=1", url.QueryEscape(query)), nil)
+	if err != nil { return "", err }
+	req.Header.Set("User-Agent", "MCP-Gateway/1.0 (https://github.com/varun7sept/mcp-gateway)")
+	resp, err := client.Do(req)
 	if err != nil { return "", err }
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -75,12 +78,15 @@ func duckDuckGo(query string) (string, error) {
 
 func wikiSummary(topic string) (string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("https://en.wikipedia.org/api/rest_v1/page/summary/%s", url.PathEscape(strings.ReplaceAll(topic, " ", "_"))))
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://en.wikipedia.org/api/rest_v1/page/summary/%s", url.PathEscape(strings.ReplaceAll(topic, " ", "_"))), nil)
+	if err != nil { return "", err }
+	req.Header.Set("User-Agent", "MCP-Gateway/1.0 (https://github.com/varun7sept/mcp-gateway)")
+	resp, err := client.Do(req)
 	if err != nil { return "", err }
 	defer resp.Body.Close()
 	if resp.StatusCode == 404 { return fmt.Sprintf("No Wikipedia article for '%s'", topic), nil }
 	body, _ := io.ReadAll(resp.Body)
-	var data struct { Title, Extract, Description string; ContentURLs struct { Desktop struct { Page string `json:"page"` } `json:"desktop"` } `json:"content_urls"` }
+	var data struct { Title string `json:"title"`; Extract string `json:"extract"`; Description string `json:"description"`; ContentURLs struct { Desktop struct { Page string `json:"page"` } `json:"desktop"` } `json:"content_urls"` }
 	if err := json.Unmarshal(body, &data); err != nil { return "", fmt.Errorf("parse error") }
 	result := fmt.Sprintf("Wikipedia: %s\n", data.Title)
 	if data.Description != "" { result += fmt.Sprintf("Description: %s\n\n", data.Description) }

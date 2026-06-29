@@ -188,8 +188,11 @@ func normalizeArgs(tool string, args map[string]any) {
 		return
 	}
 	argAliases := map[string]map[string]string{
-		"get_crypto_price": {"symbol": "coin", "coin_name": "coin", "crypto": "coin"},
-		"add_note":         {"note": "content", "text": "content", "body": "content", "name": "title"},
+		"get_crypto_price":  {"symbol": "coin", "coin_name": "coin", "crypto": "coin"},
+		"add_note":          {"note": "content", "text": "content", "body": "content", "name": "title"},
+		"wikipedia_summary": {"query": "topic", "search": "topic"},
+		"get_weather":       {"location": "city", "city_name": "city"},
+		"get_forecast":      {"location": "city", "city_name": "city"},
 	}
 	if aliases, ok := argAliases[tool]; ok {
 		for wrongKey, rightKey := range aliases {

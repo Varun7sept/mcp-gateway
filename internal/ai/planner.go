@@ -100,7 +100,7 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 
 	searchTools := map[string]bool{"search_news": true, "web_search": true, "wikipedia_summary": true}
 	coinAliases := map[string]string{"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "xrp", "DOGE": "dogecoin", "ADA": "cardano", "DOT": "polkadot", "LINK": "chainlink", "AVAX": "avalanche-2", "MATIC": "matic-network"}
-	requiredArgs := map[string][]string{"add_note": {"title", "content"}, "get_crypto_price": {"coin"}, "get_weather": {"location"}, "get_forecast": {"location"}, "get_repo": {"owner", "repo"}, "get_user": {"username"}, "list_repos": {"username"}, "search_news": {"query"}, "web_search": {"query"}, "wikipedia_summary": {"query"}, "shorten_url": {"url"}, "upload_document": {"file"}}
+	requiredArgs := map[string][]string{"add_note": {"title", "content"}, "get_crypto_price": {"coin"}, "get_weather": {"city"}, "get_forecast": {"city"}, "get_repo": {"owner", "repo"}, "get_user": {"username"}, "list_repos": {"username"}, "search_news": {"query"}, "web_search": {"query"}, "wikipedia_summary": {"topic"}, "shorten_url": {"url"}, "upload_document": {"file"}}
 	seenSearch := map[string]bool{}
 	var filtered []struct {
 		ID           int            `json:"id"`
@@ -120,8 +120,11 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 
 		// Normalize common argument key aliases (model often uses wrong keys)
 		argAliases := map[string]map[string]string{
-			"get_crypto_price": {"symbol": "coin", "coin_name": "coin", "crypto": "coin"},
-			"add_note":         {"note": "content", "text": "content", "body": "content", "name": "title"},
+			"get_crypto_price":  {"symbol": "coin", "coin_name": "coin", "crypto": "coin"},
+			"add_note":          {"note": "content", "text": "content", "body": "content", "name": "title"},
+			"wikipedia_summary": {"query": "topic", "search": "topic"},
+			"get_weather":       {"location": "city", "city_name": "city"},
+			"get_forecast":      {"location": "city", "city_name": "city"},
 		}
 		if aliases, ok := argAliases[t.Tool]; ok {
 			for wrongKey, rightKey := range aliases {
@@ -170,11 +173,16 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 		}
 
 		if searchTools[t.Tool] {
-			q, _ := t.Arguments["query"].(string)
-			if q == "" {
+			var searchQuery string
+			if q, ok := t.Arguments["query"].(string); ok && q != "" {
+				searchQuery = q
+			} else if q, ok := t.Arguments["topic"].(string); ok && q != "" {
+				searchQuery = q
+			}
+			if searchQuery == "" {
 				continue
 			}
-			key := t.Tool + ":" + q
+			key := t.Tool + ":" + searchQuery
 			if seenSearch[key] {
 				continue
 			}
