@@ -604,8 +604,10 @@ const chatPageHTML = `<!DOCTYPE html>
             if (data.plan_tasks && data.plan_tasks.length > 0) {
                 planInfo = '<div class="steps"><strong>Planned tasks:</strong>';
                 data.plan_tasks.forEach(t => {
-                    const args = t.arguments ? Object.entries(t.arguments).map(([k,v]) => k+'='+v).join(', ') : '';
-                    planInfo += '<div class="step-item"><span class="step-dot"></span>' + t.tool + '(' + args + ') — ' + (t.description || '') + '</div>';
+                    const args = t.arguments
+                        ? Object.entries(t.arguments).map(([k,v]) => _escHtml(k)+'='+_escHtml(String(v))).join(', ')
+                        : '';
+                    planInfo += '<div class="step-item"><span class="step-dot"></span>' + _escHtml(t.tool) + '(' + args + ') — ' + _escHtml(t.description || '') + '</div>';
                 });
                 planInfo += '</div>';
             }
@@ -745,14 +747,24 @@ const chatPageHTML = `<!DOCTYPE html>
         var bt = function(){var c='',i=0;while(i<3){c+=String.fromCharCode(96);i++}return c;}();
 var codeBlockRE = new RegExp(bt+'([^]*?)'+bt, 'g');
         function formatText(text) {
+            // First escape all HTML entities, then selectively re-introduce safe tags.
+            // Using replacer functions ensures captured groups are always HTML-escaped.
             return text
                 .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<br><img src="$2" alt="$1" style="max-width:200px;border-radius:10px;margin:8px 0;border:1px solid #2a2b35;"><br>')
-                .replace(/(https:\/\/api\.qrserver\.com\/[^\s<]+)/g, '<br><a href="$1" target="_blank"><img src="$1" style="max-width:180px;border-radius:10px;margin:8px 0;"></a><br>')
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                .replace(codeBlockRE, '<code style="background:#2a2b35;padding:1px 4px;border-radius:3px;font-size:12px;">$1</code>')
-                .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" style="color:#a855f7;">$1</a>')
+                // Markdown images — escape alt text to prevent attribute injection
+                .replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, (_, alt, src) =>
+                    '<br><img src="' + _escHtml(src) + '" alt="' + _escHtml(alt) + '" style="max-width:200px;border-radius:10px;margin:8px 0;border:1px solid #2a2b35;"><br>')
+                // QR code images (URL already from trusted source but still escape)
+                .replace(/(https:\/\/api\.qrserver\.com\/[^\s<]+)/g, (_, u) =>
+                    '<br><a href="' + _escHtml(u) + '" target="_blank"><img src="' + _escHtml(u) + '" style="max-width:180px;border-radius:10px;margin:8px 0;"></a><br>')
+                // Bold and italic — escape inner content
+                .replace(/\*\*(.*?)\*\*/g, (_, m) => '<strong>' + _escHtml(m) + '</strong>')
+                .replace(/\*(.*?)\*/g, (_, m) => '<em>' + _escHtml(m) + '</em>')
+                // Inline code
+                .replace(codeBlockRE, (_, m) => '<code style="background:#2a2b35;padding:1px 4px;border-radius:3px;font-size:12px;">' + _escHtml(m) + '</code>')
+                // Markdown links — escape both label and URL
+                .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, href) =>
+                    '<a href="' + _escHtml(href) + '" target="_blank" style="color:#a855f7;">' + _escHtml(label) + '</a>')
                 .replace(/\n/g, '<br>');
         }
 

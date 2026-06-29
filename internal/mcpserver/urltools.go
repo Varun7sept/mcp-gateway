@@ -64,6 +64,11 @@ func handleURLTool(w http.ResponseWriter, req MCPRequest) {
 	case "expand_url":
 		u, _ := args["url"].(string)
 		if u == "" { sendToolResult(w, req.ID, "Error: url required", true); return }
+		// Validate scheme to prevent SSRF — only allow public http/https URLs.
+		if parsed, err2 := url.Parse(u); err2 != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			sendToolResult(w, req.ID, "Error: only http:// and https:// URLs are supported", true)
+			return
+		}
 		client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
 		resp, err := client.Head(u)
 		if err != nil { sendToolResult(w, req.ID, fmt.Sprintf("Error expanding: %v", err), true); return }

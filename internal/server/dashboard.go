@@ -1123,9 +1123,10 @@ const dashboardHTML = `<!DOCTYPE html>
             list.innerHTML = data.servers.map(s => {
                 const toolCount = (s.Tools || []).length;
                 const latencyMs = Math.round(s.Latency || 0);
+                const dotClass = s.Status === 'online' ? 'online' : (s.Status === 'offline' ? 'offline' : 'unknown');
                 return '<div class="server-item">' +
                     '<div class="left">' +
-                        '<div class="status-dot ' + esc(s.Status) + '"></div>' +
+                        '<div class="status-dot ' + dotClass + '"></div>' +
                         '<div><div class="name">' + esc(s.Config.Name) + '</div>' +
                         '<div class="meta">' + esc(s.Config.URL) + '</div></div>' +
                     '</div>' +
