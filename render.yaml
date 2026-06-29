@@ -10,3 +10,5 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
+      - key: ALLOWED_ORIGINS
+        value: "https://mcp-gateway-tvaa.onrender.com"

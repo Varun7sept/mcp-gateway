@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -72,6 +73,25 @@ func Load(path string) (*Config, error) {
 	// Step 4: Basic validation
 	if cfg.Gateway.Port == 0 {
 		cfg.Gateway.Port = 8080 // Default port
+	}
+
+	seen := make(map[string]bool)
+	for _, s := range cfg.Servers {
+		if s.Name == "" {
+			return nil, fmt.Errorf("a server entry in config has an empty name")
+		}
+		if seen[s.Name] {
+			return nil, fmt.Errorf("duplicate server name %q in config", s.Name)
+		}
+		seen[s.Name] = true
+		if s.Enabled && s.URL == "" {
+			return nil, fmt.Errorf("server %q is enabled but has no URL", s.Name)
+		}
+		if s.URL != "" {
+			if _, err := url.ParseRequestURI(s.URL); err != nil {
+				return nil, fmt.Errorf("server %q has invalid URL %q: %w", s.Name, s.URL, err)
+			}
+		}
 	}
 
 	return &cfg, nil

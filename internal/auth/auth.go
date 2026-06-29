@@ -47,7 +47,7 @@ func New(mCfg MongoConfig) (*Auth, error) {
 
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		secret = "mcp-gateway-secret-change-in-production"
+		return nil, fmt.Errorf("JWT_SECRET environment variable must be set")
 	}
 
 	db := client.Database(mCfg.Database)

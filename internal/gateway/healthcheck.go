@@ -11,10 +11,12 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -35,57 +37,68 @@ type mcpResponse struct {
 }
 
 // StartHealthChecker starts a background goroutine that checks all servers periodically.
-//
-// WHAT IS A GOROUTINE?
-// Think of it as a lightweight background thread. It runs independently
-// without blocking the main program. The "go" keyword launches it.
-func (gw *Gateway) StartHealthChecker(interval time.Duration) {
+// Pass a context to stop the checker on shutdown.
+func (gw *Gateway) StartHealthChecker(ctx context.Context, interval time.Duration) {
 	// Run one check immediately on startup
 	gw.checkAllServers()
 
-	// Then run periodically in the background
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
-		for range ticker.C {
-			gw.checkAllServers()
+		for {
+			select {
+			case <-ctx.Done():
+				log.Println("Health checker stopped")
+				return
+			case <-ticker.C:
+				gw.checkAllServers()
+			}
 		}
 	}()
 
 	log.Printf("Health checker started (interval: %s)", interval)
 }
 
-// checkAllServers iterates through all servers and checks each one.
+// sharedHealthClient is reused across all health checks to enable connection pooling.
+var sharedHealthClient = &http.Client{Timeout: 5 * time.Second}
+
+// checkAllServers checks all servers concurrently.
 func (gw *Gateway) checkAllServers() {
+	// Snapshot server configs under the read lock — copy values, not pointers
 	gw.mu.RLock()
-	serverNames := make([]string, 0, len(gw.servers))
-	for name := range gw.servers {
-		serverNames = append(serverNames, name)
+	type serverSnapshot struct {
+		name string
+		cfg  ConnectedServer
+	}
+	snapshots := make([]serverSnapshot, 0, len(gw.servers))
+	for name, s := range gw.servers {
+		snapshots = append(snapshots, serverSnapshot{name: name, cfg: *s})
 	}
 	gw.mu.RUnlock()
 
-	for _, name := range serverNames {
-		gw.mu.RLock()
-		server := gw.servers[name]
-		gw.mu.RUnlock()
-
-		tools, latency, err := gw.checkServer(server)
-		if err != nil {
-			log.Printf("  [%s] OFFLINE — %v", name, err)
-			gw.UpdateServerStatus(name, StatusOffline, nil, 0)
-		} else {
-			log.Printf("  [%s] ONLINE — %d tools, latency %s", name, len(tools), latency)
-			gw.UpdateServerStatus(name, StatusOnline, tools, latency)
-		}
+	var wg sync.WaitGroup
+	for _, snap := range snapshots {
+		wg.Add(1)
+		go func(name string, s ConnectedServer) {
+			defer wg.Done()
+			tools, latency, err := gw.checkServer(&s)
+			if err != nil {
+				log.Printf("  [%s] OFFLINE — %v", name, err)
+				gw.UpdateServerStatus(name, StatusOffline, nil, 0)
+			} else {
+				log.Printf("  [%s] ONLINE — %d tools, latency %s", name, len(tools), latency)
+				gw.UpdateServerStatus(name, StatusOnline, tools, latency)
+			}
+		}(snap.name, snap.cfg)
 	}
+	wg.Wait()
 }
 
 // checkServer performs the actual health check against a single server.
 // Returns the list of tools if successful, or an error if the server is unreachable.
 func (gw *Gateway) checkServer(server *ConnectedServer) ([]Tool, time.Duration, error) {
 	start := time.Now()
-	client := &http.Client{Timeout: 5 * time.Second}
 	mcpURL := server.Config.URL + "/mcp/message"
 
 	// Step 1: Send "initialize" request (MCP handshake)
@@ -103,7 +116,7 @@ func (gw *Gateway) checkServer(server *ConnectedServer) ([]Tool, time.Duration, 
 		},
 	}
 
-	_, err := sendMCPRequest(client, mcpURL, initReq)
+	_, err := sendMCPRequest(sharedHealthClient, mcpURL, initReq)
 	if err != nil {
 		return nil, 0, fmt.Errorf("initialize failed: %w", err)
 	}
@@ -115,7 +128,7 @@ func (gw *Gateway) checkServer(server *ConnectedServer) ([]Tool, time.Duration, 
 		Method:  "tools/list",
 	}
 
-	resp, err := sendMCPRequest(client, mcpURL, toolsReq)
+	resp, err := sendMCPRequest(sharedHealthClient, mcpURL, toolsReq)
 	if err != nil {
 		return nil, 0, fmt.Errorf("tools/list failed: %w", err)
 	}
@@ -177,12 +190,22 @@ func parseTools(resp *mcpResponse, serverName string) ([]Tool, error) {
 	}
 
 	var tools []Tool
+	seen := make(map[string]bool)
 	for _, t := range toolsRaw {
 		toolMap, ok := t.(map[string]any)
 		if !ok {
 			continue
 		}
 		name, _ := toolMap["name"].(string)
+		if name == "" {
+			log.Printf("server %q returned a tool with empty name, skipping", serverName)
+			continue
+		}
+		if seen[name] {
+			log.Printf("server %q has duplicate tool name %q, skipping", serverName, name)
+			continue
+		}
+		seen[name] = true
 		desc, _ := toolMap["description"].(string)
 		tools = append(tools, Tool{
 			Name:        name,
