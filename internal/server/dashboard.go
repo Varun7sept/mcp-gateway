@@ -311,11 +311,46 @@ const dashboardHTML = `<!DOCTYPE html>
 
         .logout-btn:hover { color: #ef4444; border-color: #ef444440; }
 
+        /* Password show/hide toggle */
+        .pw-wrapper { position: relative; }
+        .pw-wrapper input { padding-right: 40px !important; }
+        .pw-toggle {
+            position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+            background: none; border: none; cursor: pointer; color: #71717a; padding: 0;
+            display: flex; align-items: center;
+        }
+        .pw-toggle:hover { color: #a855f7; }
+        .pw-toggle svg { width: 16px; height: 16px; }
+
+        /* Auth logo */
+        .auth-logo {
+            width: 48px; height: 48px; border-radius: 12px; background: #a855f720;
+            border: 1px solid #a855f740; display: flex; align-items: center; justify-content: center;
+            margin: 0 auto 20px; color: #a855f7;
+        }
+        .auth-logo svg { width: 24px; height: 24px; }
+
+        /* Auth button loading spinner */
+        .auth-btn .spinner {
+            display: none; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite;
+            margin: 0 auto;
+        }
+        .auth-btn.loading .btn-text { display: none; }
+        .auth-btn.loading .spinner { display: block; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Stat card subtitle */
+        .stat-card .subtitle { font-size: 11px; color: #52525b; margin-top: 4px; }
+
         @media (max-width: 768px) {
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
             .panels { grid-template-columns: 1fr; }
             .log-entry { grid-template-columns: 1fr; gap: 4px; }
             .form-row { flex-direction: column; }
+            .header { padding: 12px 16px; }
+            .try-tabs { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+            .try-tabs::-webkit-scrollbar { display: none; }
         }
     </style>
 </head>
@@ -324,39 +359,55 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="auth-overlay" id="authOverlay">
         <div class="auth-box">
             <div id="authSignupForm">
+                <div class="auth-logo">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
+                </div>
                 <h2>Create Account</h2>
                 <p class="subtitle">Sign up to use the MCP Gateway</p>
                 <div class="auth-error" id="authError"></div>
                 <div class="auth-success" id="authSuccess"></div>
                 <div class="form-group">
                     <label>Username</label>
-                    <input type="text" id="signupUsername" placeholder="Choose a username" />
+                    <input type="text" id="signupUsername" placeholder="Choose a username" onkeydown="if(event.key==='Enter')handleSignup()" />
                 </div>
                 <div class="form-group">
                     <label>Email</label>
-                    <input type="email" id="signupEmail" placeholder="you@example.com" />
+                    <input type="email" id="signupEmail" placeholder="you@example.com" onkeydown="if(event.key==='Enter')handleSignup()" />
                 </div>
                 <div class="form-group">
                     <label>Password</label>
-                    <input type="password" id="signupPassword" placeholder="At least 6 characters" />
+                    <div class="pw-wrapper">
+                        <input type="password" id="signupPassword" placeholder="At least 6 characters" onkeydown="if(event.key==='Enter')handleSignup()" />
+                        <button class="pw-toggle" type="button" onclick="togglePw('signupPassword',this)" tabindex="-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                        </button>
+                    </div>
                 </div>
-                <button class="auth-btn" onclick="handleSignup()">Sign Up</button>
+                <button class="auth-btn" id="signupBtn" onclick="handleSignup()"><span class="btn-text">Sign Up</span><div class="spinner"></div></button>
                 <div class="auth-switch">Already have an account? <a onclick="showLogin()">Log in</a></div>
             </div>
 
             <div id="authLoginForm" style="display:none;">
+                <div class="auth-logo">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>
+                </div>
                 <h2>Welcome Back</h2>
                 <p class="subtitle">Log in to continue using the MCP Gateway</p>
                 <div class="auth-error" id="loginError"></div>
                 <div class="form-group">
                     <label>Username</label>
-                    <input type="text" id="loginUsername" placeholder="Your username" />
+                    <input type="text" id="loginUsername" placeholder="Your username" onkeydown="if(event.key==='Enter')handleLogin()" />
                 </div>
                 <div class="form-group">
                     <label>Password</label>
-                    <input type="password" id="loginPassword" placeholder="Your password" />
+                    <div class="pw-wrapper">
+                        <input type="password" id="loginPassword" placeholder="Your password" onkeydown="if(event.key==='Enter')handleLogin()" />
+                        <button class="pw-toggle" type="button" onclick="togglePw('loginPassword',this)" tabindex="-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                        </button>
+                    </div>
                 </div>
-                <button class="auth-btn" onclick="handleLogin()">Log In</button>
+                <button class="auth-btn" id="loginBtn" onclick="handleLogin()"><span class="btn-text">Log In</span><div class="spinner"></div></button>
                 <div class="auth-switch">Don't have an account? <a onclick="showSignup()">Sign up</a></div>
             </div>
         </div>
@@ -372,7 +423,7 @@ const dashboardHTML = `<!DOCTYPE html>
                 <button class="logout-btn" onclick="handleLogout()">Logout</button>
             </div>
             <div class="dot"></div>
-            <span id="header-status">Connecting...</span>
+            <span id="header-status"></span>
         </div>
     </div>
 
@@ -382,18 +433,22 @@ const dashboardHTML = `<!DOCTYPE html>
             <div class="stat-card">
                 <div class="label">Total Requests</div>
                 <div class="value blue" id="stat-total">0</div>
+                <div class="subtitle">All-time MCP tool calls</div>
             </div>
             <div class="stat-card">
                 <div class="label">Servers Online</div>
                 <div class="value green" id="stat-servers">0</div>
+                <div class="subtitle">Active / configured</div>
             </div>
             <div class="stat-card">
                 <div class="label">Tools Available</div>
                 <div class="value purple" id="stat-tools">0</div>
+                <div class="subtitle">Across all servers</div>
             </div>
             <div class="stat-card">
                 <div class="label">Avg Latency</div>
                 <div class="value orange" id="stat-latency">0ms</div>
+                <div class="subtitle">Per tool call response time</div>
             </div>
         </div>
 
@@ -402,14 +457,14 @@ const dashboardHTML = `<!DOCTYPE html>
             <h2>Try It Live</h2>
 
             <div class="try-tabs">
-                <button class="try-tab active" onclick="switchTab('weather')">Weather</button>
-                <button class="try-tab" onclick="switchTab('github')">GitHub</button>
-                <button class="try-tab" onclick="switchTab('notes')">Notes</button>
-                <button class="try-tab" onclick="switchTab('crypto')">Crypto</button>
-                <button class="try-tab" onclick="switchTab('news')">News</button>
-                <button class="try-tab" onclick="switchTab('url')">URL Tools</button>
-                <button class="try-tab" onclick="switchTab('search')">Search</button>
-                <button class="try-tab" onclick="switchTab('docs')">Documents</button>
+                <button class="try-tab active" onclick="switchTab('weather', event)">Weather</button>
+                <button class="try-tab" onclick="switchTab('github', event)">GitHub</button>
+                <button class="try-tab" onclick="switchTab('notes', event)">Notes</button>
+                <button class="try-tab" onclick="switchTab('crypto', event)">Crypto</button>
+                <button class="try-tab" onclick="switchTab('news', event)">News</button>
+                <button class="try-tab" onclick="switchTab('url', event)">URL Tools</button>
+                <button class="try-tab" onclick="switchTab('search', event)">Search</button>
+                <button class="try-tab" onclick="switchTab('docs', event)">Documents</button>
             </div>
 
             <!-- Weather Form -->
@@ -676,6 +731,7 @@ const dashboardHTML = `<!DOCTYPE html>
             const password = document.getElementById('signupPassword').value;
             const errEl = document.getElementById('authError');
             const sucEl = document.getElementById('authSuccess');
+            const btn = document.getElementById('signupBtn');
             errEl.style.display = 'none';
             sucEl.style.display = 'none';
 
@@ -685,6 +741,7 @@ const dashboardHTML = `<!DOCTYPE html>
                 return;
             }
 
+            btn.classList.add('loading'); btn.disabled = true;
             try {
                 const resp = await fetch(API_BASE + '/api/auth/signup', {
                     method: 'POST',
@@ -699,10 +756,12 @@ const dashboardHTML = `<!DOCTYPE html>
                 } else {
                     errEl.textContent = data.error || 'Signup failed';
                     errEl.style.display = 'block';
+                    btn.classList.remove('loading'); btn.disabled = false;
                 }
             } catch (e) {
                 errEl.textContent = 'Connection error: ' + e.message;
                 errEl.style.display = 'block';
+                btn.classList.remove('loading'); btn.disabled = false;
             }
         }
 
@@ -710,6 +769,7 @@ const dashboardHTML = `<!DOCTYPE html>
             const username = document.getElementById('loginUsername').value.trim();
             const password = document.getElementById('loginPassword').value;
             const errEl = document.getElementById('loginError');
+            const btn = document.getElementById('loginBtn');
             errEl.style.display = 'none';
 
             if (!username || !password) {
@@ -718,6 +778,7 @@ const dashboardHTML = `<!DOCTYPE html>
                 return;
             }
 
+            btn.classList.add('loading'); btn.disabled = true;
             try {
                 const resp = await fetch(API_BASE + '/api/auth/login', {
                     method: 'POST',
@@ -730,10 +791,12 @@ const dashboardHTML = `<!DOCTYPE html>
                 } else {
                     errEl.textContent = data.error || 'Login failed';
                     errEl.style.display = 'block';
+                    btn.classList.remove('loading'); btn.disabled = false;
                 }
             } catch (e) {
                 errEl.textContent = 'Connection error: ' + e.message;
                 errEl.style.display = 'block';
+                btn.classList.remove('loading'); btn.disabled = false;
             }
         }
 
@@ -795,11 +858,20 @@ const dashboardHTML = `<!DOCTYPE html>
                 .catch(() => { showAuthOverlay(); });
         }
 
+        // XSS escape helper
+        function esc(s) { const d = document.createElement('div'); d.textContent = String(s || ''); return d.innerHTML; }
+
+        // Password show/hide toggle
+        function togglePw(inputId, btn) {
+            const inp = document.getElementById(inputId);
+            inp.type = inp.type === 'password' ? 'text' : 'password';
+        }
+
         // --- Tab Switching ---
-        function switchTab(tab) {
+        function switchTab(tab, e) {
             document.querySelectorAll('.try-tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.try-form').forEach(f => f.classList.remove('active'));
-            event.target.classList.add('active');
+            if (e && e.target) e.target.classList.add('active');
             document.getElementById('form-' + tab).classList.add('active');
         }
 
@@ -1038,7 +1110,7 @@ const dashboardHTML = `<!DOCTYPE html>
             const onlineCount = (servers.servers || []).filter(s => s.Status === 'online').length;
             document.getElementById('stat-servers').textContent = onlineCount + '/' + (servers.count || 0);
             document.getElementById('stat-tools').textContent = tools.count || 0;
-            const avgMs = Math.round((stats.avg_latency_ms || 0) / 1000000);
+            const avgMs = Math.round(stats.avg_latency_ms || 0);
             document.getElementById('stat-latency').textContent = avgMs + 'ms';
         }
 
@@ -1050,12 +1122,12 @@ const dashboardHTML = `<!DOCTYPE html>
             }
             list.innerHTML = data.servers.map(s => {
                 const toolCount = (s.Tools || []).length;
-                const latencyMs = Math.round((s.Latency || 0) / 1000000);
+                const latencyMs = Math.round(s.Latency || 0);
                 return '<div class="server-item">' +
                     '<div class="left">' +
-                        '<div class="status-dot ' + s.Status + '"></div>' +
-                        '<div><div class="name">' + s.Config.Name + '</div>' +
-                        '<div class="meta">' + s.Config.URL + '</div></div>' +
+                        '<div class="status-dot ' + esc(s.Status) + '"></div>' +
+                        '<div><div class="name">' + esc(s.Config.Name) + '</div>' +
+                        '<div class="meta">' + esc(s.Config.URL) + '</div></div>' +
                     '</div>' +
                     '<div class="meta">' + toolCount + ' tools | ' + latencyMs + 'ms</div>' +
                 '</div>';
@@ -1070,9 +1142,9 @@ const dashboardHTML = `<!DOCTYPE html>
             }
             list.innerHTML = data.tools.map(t =>
                 '<div class="tool-item">' +
-                    '<div><span class="name">' + t.name + '</span>' +
-                    '<div class="desc">' + (t.description || '') + '</div></div>' +
-                    '<span class="server-badge">' + t.server_name + '</span>' +
+                    '<div><span class="name">' + esc(t.name) + '</span>' +
+                    '<div class="desc">' + esc(t.description || '') + '</div></div>' +
+                    '<span class="server-badge">' + esc(t.server_name) + '</span>' +
                 '</div>'
             ).join('');
         }
@@ -1085,14 +1157,14 @@ const dashboardHTML = `<!DOCTYPE html>
             }
             list.innerHTML = data.logs.map(l => {
                 const time = new Date(l.timestamp).toLocaleTimeString();
-                const latencyMs = Math.round((l.latency_ms || 0) / 1000000);
+                const latencyMs = Math.round(l.latency_ms || 0);
                 const statusClass = l.status === 'success' ? 'status-success' : 'status-error';
                 return '<div class="log-entry">' +
-                    '<span class="time">' + time + '</span>' +
-                    '<span class="method">' + l.method + '</span>' +
-                    '<span class="tool">' + (l.tool_name || '-') + '</span>' +
+                    '<span class="time">' + esc(time) + '</span>' +
+                    '<span class="method">' + esc(l.method) + '</span>' +
+                    '<span class="tool">' + esc(l.tool_name || '-') + '</span>' +
                     '<span class="latency">' + latencyMs + 'ms</span>' +
-                    '<span class="' + statusClass + '">' + l.status + '</span>' +
+                    '<span class="' + statusClass + '">' + esc(l.status) + '</span>' +
                 '</div>';
             }).join('');
         }
@@ -1102,6 +1174,10 @@ const dashboardHTML = `<!DOCTYPE html>
         document.getElementById('github-user').addEventListener('keydown', e => { if(e.key==='Enter') callGithub(); });
         document.getElementById('github-repo').addEventListener('keydown', e => { if(e.key==='Enter') callGithub(); });
         document.getElementById('note-content').addEventListener('keydown', e => { if(e.key==='Enter') callNotes(); });
+        document.getElementById('news-query').addEventListener('keydown', e => { if(e.key==='Enter') callNews(); });
+        document.getElementById('crypto-coin').addEventListener('keydown', e => { if(e.key==='Enter') callCrypto(); });
+        document.getElementById('url-input').addEventListener('keydown', e => { if(e.key==='Enter') callURL(); });
+        document.getElementById('search-query').addEventListener('keydown', e => { if(e.key==='Enter') callSearch(); });
     </script>
 </body>
 </html>`
