@@ -671,6 +671,37 @@ const dashboardHTML = `<!DOCTYPE html>
             return t ? { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t } : { 'Content-Type': 'application/json' };
         }
 
+        // Decode JWT expiry (exp claim) without verifying signature — for
+        // client-side proactive refresh only. Returns 0 if unreadable.
+        function tokenExpiresAt(token) {
+            try {
+                const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+                return payload.exp || 0;
+            } catch { return 0; }
+        }
+
+        // Silently refresh the token when less than 24 h remain.
+        // Called on page load and once per hour. Each device refreshes
+        // independently so multi-device sessions stay alive.
+        async function silentRefresh() {
+            const token = getToken();
+            if (!token) return;
+            const exp = tokenExpiresAt(token);
+            if (!exp) return;
+            const secsLeft = exp - Math.floor(Date.now() / 1000);
+            if (secsLeft > 24 * 3600) return; // more than 1 day left — no need yet
+            try {
+                const resp = await fetch(API_BASE + '/api/auth/refresh', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data.token) setToken(data.token);
+                }
+            } catch {}
+        }
+
         function apiFetch(url, opts) {
             const h = authHeaders();
             if (opts && opts.headers) Object.assign(h, opts.headers);
@@ -820,6 +851,11 @@ const dashboardHTML = `<!DOCTYPE html>
                 refreshInterval = setInterval(refreshAll, 5000);
             }
         }
+
+        // Proactively refresh token on load and every hour so sessions persist
+        // across devices without interruption.
+        silentRefresh();
+        setInterval(silentRefresh, 60 * 60 * 1000);
 
         const savedToken = getToken();
         if (savedToken) {

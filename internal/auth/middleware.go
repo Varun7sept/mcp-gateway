@@ -28,7 +28,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 
 		// Exact-match only — do NOT use HasPrefix here or "/" will match everything
 		switch path {
-		case "/", "/health", "/chat", "/api/auth/signup", "/api/auth/login":
+		case "/", "/health", "/chat", "/api/auth/signup", "/api/auth/login", "/api/auth/refresh":
 			next.ServeHTTP(w, r)
 			return
 		}

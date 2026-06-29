@@ -250,6 +250,26 @@ const chatPageHTML = `<!DOCTYPE html>
         // ===== Auth =====
         function getToken() { return localStorage.getItem('mcp_token'); }
         function authHeaders() { return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() }; }
+
+        function tokenExpiresAt(token) {
+            try {
+                const p = JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+                return p.exp || 0;
+            } catch { return 0; }
+        }
+        async function silentRefresh() {
+            const token = getToken();
+            if (!token) return;
+            const exp = tokenExpiresAt(token);
+            if (!exp || exp - Math.floor(Date.now()/1000) > 24*3600) return;
+            try {
+                const resp = await fetch('/api/auth/refresh', { method:'POST', headers:{'Authorization':'Bearer '+token} });
+                if (resp.ok) { const d = await resp.json(); if (d.token) localStorage.setItem('mcp_token', d.token); }
+            } catch {}
+        }
+        silentRefresh();
+        setInterval(silentRefresh, 60 * 60 * 1000);
+
         function clearChatStorage() {
             localStorage.removeItem('chat_messages');
             localStorage.removeItem('local_sessions');
@@ -513,12 +533,14 @@ const chatPageHTML = `<!DOCTYPE html>
         // ===== Sending Messages =====
         let pendingApprovalId = null;
         let pendingApprovalMessage = null;
+        let pendingApprovedTools = []; // accumulates across multiple approval rounds
 
         async function sendMessage() {
             const input = document.getElementById('user-input');
             const msg = input.value.trim();
             if (!msg || !currentSessionId) return;
 
+            pendingApprovedTools = []; // reset for new message
             await doSend(msg, null);
             input.focus();
             scrollToBottom();
@@ -542,6 +564,7 @@ const chatPageHTML = `<!DOCTYPE html>
             try {
                 const body = { message: msg, session_id: currentSessionId };
                 if (approvalId) body.approval_id = approvalId;
+                if (pendingApprovedTools.length > 0) body.approved_tools = pendingApprovedTools;
 
                 const resp = await fetch('/api/chat', {
                     method: 'POST',
@@ -631,13 +654,21 @@ const chatPageHTML = `<!DOCTYPE html>
             scrollToBottom();
 
             try {
-                await fetch('/api/approvals/' + pendingApprovalId + '/approve', {
+                const approveResp = await fetch('/api/approvals/' + pendingApprovalId + '/approve', {
                     method: 'POST', headers: authHeaders()
                 });
+                // Collect the approved tool name so we can tell the backend
+                // not to ask again if the plan still contains that tool.
+                if (approveResp.ok) {
+                    const approveData = await approveResp.json();
+                    if (approveData.tool) pendingApprovedTools.push(approveData.tool);
+                }
                 document.getElementById('approval-prompt').remove();
-                await doSend(pendingApprovalMessage, pendingApprovalId);
+                const savedId = pendingApprovalId;
+                const savedMsg = pendingApprovalMessage;
                 pendingApprovalId = null;
                 pendingApprovalMessage = null;
+                await doSend(savedMsg, savedId);
             } catch (e) {
                 document.getElementById('typing').style.display = 'none';
                 document.getElementById('send-btn').disabled = false;
