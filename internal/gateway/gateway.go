@@ -102,33 +102,33 @@ func (gw *Gateway) ListTools() []Tool {
 	return allTools
 }
 
-// GetServer returns a specific server by name.
+// GetServer returns a copy of a specific server by name.
 // Used when routing a tool call to the right server.
-func (gw *Gateway) GetServer(name string) (*ConnectedServer, error) {
+func (gw *Gateway) GetServer(name string) (ConnectedServer, error) {
 	gw.mu.RLock()
 	defer gw.mu.RUnlock()
 
 	s, exists := gw.servers[name]
 	if !exists {
-		return nil, fmt.Errorf("server %q not found", name)
+		return ConnectedServer{}, fmt.Errorf("server %q not found", name)
 	}
-	return s, nil
+	return *s, nil
 }
 
 // FindToolServer finds which server owns a given tool.
 // When a client calls "get_weather", we need to know it belongs to the weather server.
-func (gw *Gateway) FindToolServer(toolName string) (*ConnectedServer, error) {
+func (gw *Gateway) FindToolServer(toolName string) (ConnectedServer, error) {
 	gw.mu.RLock()
 	defer gw.mu.RUnlock()
 
 	for _, s := range gw.servers {
 		for _, t := range s.Tools {
 			if t.Name == toolName {
-				return s, nil
+				return *s, nil
 			}
 		}
 	}
-	return nil, fmt.Errorf("no server found for tool %q", toolName)
+	return ConnectedServer{}, fmt.Errorf("no server found for tool %q", toolName)
 }
 
 // UpdateServerStatus updates the health status of a server.

@@ -22,11 +22,11 @@ type RequestLog struct {
 
 // Stats holds aggregate statistics.
 type Stats struct {
-	TotalRequests  int            `json:"total_requests"`
-	SuccessCount   int            `json:"success_count"`
-	ErrorCount     int            `json:"error_count"`
-	AvgLatency     time.Duration  `json:"avg_latency_ms"`
-	RequestsByTool map[string]int `json:"requests_by_tool"`
+	TotalRequests    int            `json:"total_requests"`
+	SuccessCount     int            `json:"success_count"`
+	ErrorCount       int            `json:"error_count"`
+	AvgLatencyMs     int64          `json:"avg_latency_ms"` // milliseconds
+	RequestsByTool   map[string]int `json:"requests_by_tool"`
 	RequestsByServer map[string]int `json:"requests_by_server"`
 }
 
@@ -68,7 +68,10 @@ func (l *Logger) Log(method, toolName, serverName, username, status, errMsg stri
 	l.logs = append(l.logs, entry)
 
 	if len(l.logs) > l.maxLogs {
-		l.logs = l.logs[len(l.logs)-l.maxLogs:]
+		// Copy to a fresh slice so the old backing array can be GC'd
+		trimmed := make([]RequestLog, l.maxLogs)
+		copy(trimmed, l.logs[len(l.logs)-l.maxLogs:])
+		l.logs = trimmed
 	}
 }
 
@@ -122,7 +125,7 @@ func (l *Logger) GetStats(username string) Stats {
 	}
 
 	if stats.TotalRequests > 0 {
-		stats.AvgLatency = totalLatency / time.Duration(stats.TotalRequests)
+		stats.AvgLatencyMs = (totalLatency / time.Duration(stats.TotalRequests)).Milliseconds()
 	}
 
 	return stats

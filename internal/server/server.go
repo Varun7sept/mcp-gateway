@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/varunbanda/mcp-gateway/internal/ai" // Used for Brain type
@@ -18,24 +21,67 @@ import (
 // Ensure packages are used.
 var _ *ai.Brain
 
+// rateLimiter tracks per-IP attempt counts for auth endpoints.
+type rateLimiter struct {
+	mu       sync.Mutex
+	attempts map[string][]time.Time
+	window   time.Duration
+	max      int
+}
+
+func newRateLimiter(window time.Duration, max int) *rateLimiter {
+	return &rateLimiter{
+		attempts: make(map[string][]time.Time),
+		window:   window,
+		max:      max,
+	}
+}
+
+func (rl *rateLimiter) allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-rl.window)
+
+	// Remove attempts outside the window
+	prev := rl.attempts[ip]
+	valid := prev[:0]
+	for _, t := range prev {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
+
+	if len(valid) >= rl.max {
+		rl.attempts[ip] = valid
+		return false
+	}
+
+	rl.attempts[ip] = append(valid, now)
+	return true
+}
+
 // Server is our HTTP server that wraps the Gateway logic.
 type Server struct {
-	gateway        *gateway.Gateway
-	logger         *logger.Logger
-	brain          *ai.Brain
-	auth           *auth.Auth
-	port           int
-	approvalStore  *approval.Store
+	gateway       *gateway.Gateway
+	logger        *logger.Logger
+	brain         *ai.Brain
+	auth          *auth.Auth
+	port          int
+	approvalStore *approval.Store
+	authLimiter   *rateLimiter
 }
 
 // New creates a new HTTP server.
 func New(gw *gateway.Gateway, reqLogger *logger.Logger, aiBrain *ai.Brain, authenticator *auth.Auth, port int) *Server {
 	return &Server{
-		gateway: gw,
-		logger:  reqLogger,
-		brain:   aiBrain,
-		auth:    authenticator,
-		port:    port,
+		gateway:     gw,
+		logger:      reqLogger,
+		brain:       aiBrain,
+		auth:        authenticator,
+		port:        port,
+		authLimiter: newRateLimiter(time.Minute, 10), // 10 attempts per IP per minute
 	}
 }
 
@@ -164,6 +210,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMCPMessage(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
+	r.Body = http.MaxBytesReader(w, r.Body, 10*1024*1024) // 10 MB limit
 	var request MCPRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		s.jsonResponse(w, http.StatusBadRequest, map[string]string{
@@ -365,8 +412,22 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
+	allowed := os.Getenv("ALLOWED_ORIGINS")
+	if allowed == "" {
+		allowed = "https://mcp-gateway-tvaa.onrender.com"
+	}
+	origins := strings.Split(allowed, ",")
+	originSet := make(map[string]bool, len(origins))
+	for _, o := range origins {
+		originSet[strings.TrimSpace(o)] = true
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if origin != "" && originSet[origin] {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
@@ -384,6 +445,10 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	if s.auth == nil {
 		s.jsonResponse(w, http.StatusServiceUnavailable, map[string]string{"error": "Authentication is not configured (no MongoDB)"})
+		return
+	}
+	if !s.authLimiter.allow(r.RemoteAddr) {
+		s.jsonResponse(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, please try again later"})
 		return
 	}
 	var req struct {
@@ -419,6 +484,10 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.auth == nil {
 		s.jsonResponse(w, http.StatusServiceUnavailable, map[string]string{"error": "Authentication is not configured (no MongoDB)"})
+		return
+	}
+	if !s.authLimiter.allow(r.RemoteAddr) {
+		s.jsonResponse(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, please try again later"})
 		return
 	}
 	var req struct {

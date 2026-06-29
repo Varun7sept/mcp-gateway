@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/varunbanda/mcp-gateway/internal/ai"
@@ -94,8 +97,12 @@ func main() {
 		return cmd.Run()
 	})
 
+	// Create a context that cancels on SIGINT/SIGTERM for graceful shutdown
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	// Start health checker (every 10 seconds)
-	gw.StartHealthChecker(10 * time.Second)
+	gw.StartHealthChecker(ctx, 10*time.Second)
 
 	// Start HTTP server (use PORT env var for Fly.io/Railway compatibility)
 	port := cfg.Gateway.Port

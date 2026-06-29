@@ -63,8 +63,11 @@ func (gw *Gateway) ForwardToolCall(req ForwardRequest) (*ForwardResult, error) {
 	}, nil
 }
 
+// forwardClient is reused across all forwarded tool calls to enable connection pooling.
+var forwardClient = &http.Client{Timeout: 30 * time.Second}
+
 // forwardToServer sends the request to a specific downstream server and returns the raw response.
-func (gw *Gateway) forwardToServer(server *ConnectedServer, req ForwardRequest) (any, error) {
+func (gw *Gateway) forwardToServer(server ConnectedServer, req ForwardRequest) (any, error) {
 	// Convert request to JSON
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -73,16 +76,15 @@ func (gw *Gateway) forwardToServer(server *ConnectedServer, req ForwardRequest) 
 
 	// Send to the server's MCP endpoint
 	url := server.Config.URL + "/mcp/message"
-	client := &http.Client{Timeout: 30 * time.Second}
 
-	httpResp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	httpResp, err := forwardClient.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer httpResp.Body.Close()
 
-	// Read the entire response body
-	respBody, err := io.ReadAll(httpResp.Body)
+	// Read the response body with a size cap to prevent memory exhaustion
+	respBody, err := io.ReadAll(io.LimitReader(httpResp.Body, 10*1024*1024))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
