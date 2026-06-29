@@ -13,6 +13,9 @@ type OrchestratorConfig struct {
 	Memory         MemoryStore
 	ApprovalStore  *approval.Store
 	ApprovalUser   string
+	// ApprovedTools lists tool names the user has already approved this request.
+	// checkApprovals skips these so the user is never asked twice.
+	ApprovedTools  []string
 }
 
 type OrchestratorResult struct {
@@ -139,7 +142,16 @@ func (b *Brain) checkApprovals(plan *Plan, cfg *OrchestratorConfig) (*Orchestrat
 		return nil, nil
 	}
 
+	// Build a set of already-approved tool names so we never ask twice.
+	approved := make(map[string]bool, len(cfg.ApprovedTools))
+	for _, t := range cfg.ApprovedTools {
+		approved[t] = true
+	}
+
 	for _, task := range plan.Tasks {
+		if approved[task.Tool] {
+			continue // user already approved this tool for this request
+		}
 		if _, risky := cfg.ApprovalStore.IsRiskyTool(task.Tool); risky {
 			req := cfg.ApprovalStore.CreateRequest(
 				cfg.ApprovalUser,

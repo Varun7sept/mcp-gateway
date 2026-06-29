@@ -513,12 +513,14 @@ const chatPageHTML = `<!DOCTYPE html>
         // ===== Sending Messages =====
         let pendingApprovalId = null;
         let pendingApprovalMessage = null;
+        let pendingApprovedTools = []; // accumulates across multiple approval rounds
 
         async function sendMessage() {
             const input = document.getElementById('user-input');
             const msg = input.value.trim();
             if (!msg || !currentSessionId) return;
 
+            pendingApprovedTools = []; // reset for new message
             await doSend(msg, null);
             input.focus();
             scrollToBottom();
@@ -542,6 +544,7 @@ const chatPageHTML = `<!DOCTYPE html>
             try {
                 const body = { message: msg, session_id: currentSessionId };
                 if (approvalId) body.approval_id = approvalId;
+                if (pendingApprovedTools.length > 0) body.approved_tools = pendingApprovedTools;
 
                 const resp = await fetch('/api/chat', {
                     method: 'POST',
@@ -631,13 +634,21 @@ const chatPageHTML = `<!DOCTYPE html>
             scrollToBottom();
 
             try {
-                await fetch('/api/approvals/' + pendingApprovalId + '/approve', {
+                const approveResp = await fetch('/api/approvals/' + pendingApprovalId + '/approve', {
                     method: 'POST', headers: authHeaders()
                 });
+                // Collect the approved tool name so we can tell the backend
+                // not to ask again if the plan still contains that tool.
+                if (approveResp.ok) {
+                    const approveData = await approveResp.json();
+                    if (approveData.tool) pendingApprovedTools.push(approveData.tool);
+                }
                 document.getElementById('approval-prompt').remove();
-                await doSend(pendingApprovalMessage, pendingApprovalId);
+                const savedId = pendingApprovalId;
+                const savedMsg = pendingApprovalMessage;
                 pendingApprovalId = null;
                 pendingApprovalMessage = null;
+                await doSend(savedMsg, savedId);
             } catch (e) {
                 document.getElementById('typing').style.display = 'none';
                 document.getElementById('send-btn').disabled = false;
