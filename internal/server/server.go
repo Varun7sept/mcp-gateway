@@ -129,6 +129,7 @@ func (s *Server) Start() error {
 	// Auth endpoints (public — signup/login don't need a token)
 	mux.HandleFunc("POST /api/auth/signup", s.handleSignup)
 	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /api/auth/refresh", s.handleRefreshToken) // refresh before expiry
 	mux.HandleFunc("GET /api/auth/me", s.handleAuthMe)
 	if s.auth == nil {
 		log.Println("Auth disabled — all API routes are public")
@@ -544,6 +545,27 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"token":    token,
 		"username": req.Username,
 	})
+}
+
+func (s *Server) handleRefreshToken(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		s.jsonResponse(w, http.StatusServiceUnavailable, map[string]string{"error": "Authentication is not configured"})
+		return
+	}
+	// Extract token from Authorization header
+	authHeader := r.Header.Get("Authorization")
+	if len(authHeader) <= 7 || authHeader[:7] != "Bearer " {
+		s.jsonResponse(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid authorization header"})
+		return
+	}
+	tokenStr := authHeader[7:]
+
+	newToken, err := s.auth.RefreshToken(tokenStr)
+	if err != nil {
+		s.jsonResponse(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, map[string]any{"token": newToken})
 }
 
 func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {

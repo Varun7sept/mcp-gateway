@@ -20,9 +20,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Message      string `json:"message"`
-		SessionID    string `json:"session_id"`
-		ApprovalID   string `json:"approval_id"`
+		Message       string   `json:"message"`
+		SessionID     string   `json:"session_id"`
+		ApprovalID    string   `json:"approval_id"`
+		ApprovedTools []string `json:"approved_tools"` // tools approved in previous rounds
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
@@ -46,6 +47,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	var history []map[string]string
 	var chatStore *auth.ChatStore
+	var approvedTools []string // tools the user approved in this request cycle
 
 	// Chat persistence requires MongoDB auth; skip if not configured
 	if s.auth != nil {
@@ -59,9 +61,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// If continuing after approval, wait for approval before proceeding
+		// If continuing after approval, verify it was granted.
+		// Capture the approved request so we know which tool was approved and
+		// can tell the orchestrator to skip it on re-plan (prevents infinite loop).
 		if req.ApprovalID != "" && s.approvalStore != nil {
-			_, err := s.approvalStore.WaitForApproval(req.ApprovalID, username, 500*time.Millisecond)
+			approved, err := s.approvalStore.WaitForApproval(req.ApprovalID, username, 500*time.Millisecond)
 			if err != nil {
 				s.jsonResponse(w, http.StatusForbidden, map[string]string{
 					"error":   err.Error(),
@@ -69,6 +73,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
+			if approved.Tool != "" {
+				approvedTools = append(approvedTools, approved.Tool)
+			}
+			// Also carry forward any tools approved in earlier rounds.
+			approvedTools = append(approvedTools, req.ApprovedTools...)
 		}
 
 		// Store user message; auto-update title on first message
@@ -91,6 +100,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if s.approvalStore != nil && username != "" {
 		orchCfg.ApprovalStore = s.approvalStore
 		orchCfg.ApprovalUser = username
+		orchCfg.ApprovedTools = approvedTools // skip re-asking for already-approved tools
 	}
 
 	// Process via orchestrator (planning + parallel execution + self-correction + approval)
