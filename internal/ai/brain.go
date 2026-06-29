@@ -137,7 +137,7 @@ func (b *Brain) executeChat(request ChatRequest) (*ChatResponse, error) {
 			continue
 		}
 
-		respBody, readErr := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024)) // 4 MB max
 		resp.Body.Close()
 		if readErr != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", model, readErr))
@@ -317,7 +317,11 @@ func (b *Brain) DecideAction(userMessage string, conversationHistory []Message) 
 	if len(choice.Message.ToolCalls) > 0 {
 		tc := choice.Message.ToolCalls[0]
 		var args map[string]any
-		json.Unmarshal([]byte(tc.Function.Arguments), &args)
+		if tc.Function.Arguments != "" {
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				args = map[string]any{} // fall back to empty args rather than nil
+			}
+		}
 
 		return &ToolCallResult{
 			NeedsTool:  true,

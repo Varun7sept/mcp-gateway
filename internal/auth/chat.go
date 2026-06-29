@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -9,6 +10,13 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
+
+const dbTimeout = 10 * time.Second
+
+// dbCtx returns a context with a 10-second timeout for MongoDB operations.
+func dbCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), dbTimeout)
+}
 
 type ChatSession struct {
 	ID        string    `json:"id"`
@@ -40,9 +48,12 @@ func (a *Auth) ChatStore() *ChatStore {
 }
 
 func (cs *ChatStore) CreateSession(username, title string) (*ChatSession, error) {
+	ctx, cancel := dbCtx()
+	defer cancel()
+
 	now := time.Now()
 	oid := primitive.NewObjectID()
-	_, err := cs.sessions.InsertOne(context.Background(), bson.M{
+	_, err := cs.sessions.InsertOne(ctx, bson.M{
 		"_id":        oid,
 		"username":   username,
 		"title":      title,
@@ -62,7 +73,9 @@ func (cs *ChatStore) CreateSession(username, title string) (*ChatSession, error)
 }
 
 func (cs *ChatStore) ListSessions(username string) ([]ChatSession, error) {
-	ctx := context.Background()
+	ctx, cancel := dbCtx()
+	defer cancel()
+
 	cursor, err := cs.sessions.Find(ctx, bson.M{"username": username},
 		options.Find().SetSort(bson.D{{Key: "updated_at", Value: -1}}))
 	if err != nil {
@@ -80,12 +93,15 @@ func (cs *ChatStore) ListSessions(username string) ([]ChatSession, error) {
 }
 
 func (cs *ChatStore) GetSession(id, username string) (*ChatSession, error) {
+	ctx, cancel := dbCtx()
+	defer cancel()
+
 	oid, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
 		return nil, err
 	}
 	var raw bson.M
-	err = cs.sessions.FindOne(context.Background(), bson.M{"_id": oid, "username": username}).Decode(&raw)
+	err = cs.sessions.FindOne(ctx, bson.M{"_id": oid, "username": username}).Decode(&raw)
 	if err != nil {
 		return nil, err
 	}
@@ -98,19 +114,28 @@ func (cs *ChatStore) DeleteSession(id, username string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := cs.sessions.DeleteOne(context.Background(), bson.M{"_id": oid, "username": username}); err != nil {
+
+	ctx, cancel := dbCtx()
+	defer cancel()
+	if _, err := cs.sessions.DeleteOne(ctx, bson.M{"_id": oid, "username": username}); err != nil {
 		return err
 	}
-	_, err = cs.messages.DeleteMany(context.Background(), bson.M{"session_id": oid})
+
+	ctx2, cancel2 := dbCtx()
+	defer cancel2()
+	_, err = cs.messages.DeleteMany(ctx2, bson.M{"session_id": oid})
 	return err
 }
 
 func (cs *ChatStore) UpdateSessionTitle(sessionID, username, title string) error {
+	ctx, cancel := dbCtx()
+	defer cancel()
+
 	oid, err := primitive.ObjectIDFromHex(sessionID)
 	if err != nil {
 		return err
 	}
-	_, err = cs.sessions.UpdateOne(context.Background(),
+	_, err = cs.sessions.UpdateOne(ctx,
 		bson.M{"_id": oid, "username": username},
 		bson.M{"$set": bson.M{"title": title, "updated_at": time.Now()}})
 	return err
@@ -121,7 +146,10 @@ func (cs *ChatStore) AddMessage(sessionID, role, content string, meta map[string
 	if err != nil {
 		return err
 	}
-	_, err = cs.messages.InsertOne(context.Background(), bson.M{
+
+	ctx, cancel := dbCtx()
+	defer cancel()
+	_, err = cs.messages.InsertOne(ctx, bson.M{
 		"session_id": oid,
 		"role":       role,
 		"content":    content,
@@ -131,16 +159,24 @@ func (cs *ChatStore) AddMessage(sessionID, role, content string, meta map[string
 	if err != nil {
 		return err
 	}
-	cs.sessions.UpdateByID(context.Background(), oid, bson.M{"$set": bson.M{"updated_at": time.Now()}})
+
+	// Best-effort: update session's updated_at timestamp.
+	ctx2, cancel2 := dbCtx()
+	defer cancel2()
+	if _, err := cs.sessions.UpdateByID(ctx2, oid, bson.M{"$set": bson.M{"updated_at": time.Now()}}); err != nil {
+		log.Printf("WARNING: failed to update session updated_at for %s: %v", sessionID, err)
+	}
 	return nil
 }
 
 func (cs *ChatStore) GetMessages(sessionID string) ([]ChatMessage, error) {
+	ctx, cancel := dbCtx()
+	defer cancel()
+
 	oid, err := primitive.ObjectIDFromHex(sessionID)
 	if err != nil {
 		return nil, err
 	}
-	ctx := context.Background()
 	cursor, err := cs.messages.Find(ctx, bson.M{"session_id": oid},
 		options.Find().SetSort(bson.D{{Key: "created_at", Value: 1}}))
 	if err != nil {
@@ -158,11 +194,13 @@ func (cs *ChatStore) GetMessages(sessionID string) ([]ChatMessage, error) {
 }
 
 func (cs *ChatStore) GetRecentMessages(sessionID string, limit int) ([]ChatMessage, error) {
+	ctx, cancel := dbCtx()
+	defer cancel()
+
 	oid, err := primitive.ObjectIDFromHex(sessionID)
 	if err != nil {
 		return nil, err
 	}
-	ctx := context.Background()
 	cursor, err := cs.messages.Find(ctx, bson.M{"session_id": oid},
 		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(int64(limit)))
 	if err != nil {

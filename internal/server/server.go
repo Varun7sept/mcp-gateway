@@ -4,7 +4,9 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -46,7 +48,7 @@ func (rl *rateLimiter) allow(ip string) bool {
 
 	// Remove attempts outside the window
 	prev := rl.attempts[ip]
-	valid := prev[:0]
+	var valid []time.Time
 	for _, t := range prev {
 		if t.After(cutoff) {
 			valid = append(valid, t)
@@ -58,8 +60,32 @@ func (rl *rateLimiter) allow(ip string) bool {
 		return false
 	}
 
+	if len(valid) == 0 {
+		// Prune the map entry to prevent unbounded growth from cycling IPs
+		delete(rl.attempts, ip)
+	}
 	rl.attempts[ip] = append(valid, now)
 	return true
+}
+
+// clientIP extracts the real client IP, preferring X-Forwarded-For (set by
+// Render / most reverse-proxies) over the TCP peer address.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// XFF is a comma-separated list; leftmost is the original client.
+		if i := strings.Index(xff, ","); i != -1 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
 }
 
 // Server is our HTTP server that wraps the Gateway logic.
@@ -300,7 +326,13 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		s.jsonResponse(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create proxy request"})
 		return
 	}
-	proxyReq.Header = r.Header
+	// Copy only safe, non-sensitive headers to the upstream server.
+	// Never forward Authorization, Cookie, or other auth headers.
+	for _, h := range []string{"Content-Type", "Content-Length", "Accept"} {
+		if v := r.Header.Get(h); v != "" {
+			proxyReq.Header.Set(h, v)
+		}
+	}
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(proxyReq)
@@ -310,12 +342,11 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Forward response back
+	// Forward response back (limit to 4 MB to prevent memory exhaustion).
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	body := make([]byte, 1024*1024) // 1MB max
-	n, _ := resp.Body.Read(body)
-	w.Write(body[:n])
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	w.Write(body)
 }
 
 // handleDashboard serves the embedded HTML dashboard.
@@ -447,7 +478,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		s.jsonResponse(w, http.StatusServiceUnavailable, map[string]string{"error": "Authentication is not configured (no MongoDB)"})
 		return
 	}
-	if !s.authLimiter.allow(r.RemoteAddr) {
+	if !s.authLimiter.allow(clientIP(r)) {
 		s.jsonResponse(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, please try again later"})
 		return
 	}
@@ -486,7 +517,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.jsonResponse(w, http.StatusServiceUnavailable, map[string]string{"error": "Authentication is not configured (no MongoDB)"})
 		return
 	}
-	if !s.authLimiter.allow(r.RemoteAddr) {
+	if !s.authLimiter.allow(clientIP(r)) {
 		s.jsonResponse(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests, please try again later"})
 		return
 	}

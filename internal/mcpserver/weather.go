@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+var weatherClient = &http.Client{Timeout: 10 * time.Second}
+
 var weatherTools = []map[string]any{
 	{"name": "get_weather", "description": "Get the REAL current weather for any city", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string", "description": "City name"}}, "required": []string{"city"}}},
 	{"name": "get_forecast", "description": "Get a real 3-day weather forecast for any city", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string", "description": "City name"}}, "required": []string{"city"}}},
@@ -65,8 +67,7 @@ func handleWeatherTool(w http.ResponseWriter, req MCPRequest) {
 }
 
 func fetchWeather(city string) (string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("https://wttr.in/%s?format=j1", url.QueryEscape(city)))
+	resp, err := weatherClient.Get(fmt.Sprintf("https://wttr.in/%s?format=j1", url.QueryEscape(city)))
 	if err != nil { return "", err }
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -80,8 +81,7 @@ func fetchWeather(city string) (string, error) {
 }
 
 func fetchForecast(city string) (string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("https://wttr.in/%s?format=j1", url.QueryEscape(city)))
+	resp, err := weatherClient.Get(fmt.Sprintf("https://wttr.in/%s?format=j1", url.QueryEscape(city)))
 	if err != nil { return "", err }
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)

@@ -14,6 +14,34 @@ const chatPageHTML = `<!DOCTYPE html>
             display: flex; overflow: hidden;
         }
 
+        /* Hamburger mobile toggle */
+        .hamburger-btn {
+            display: none; width: 36px; height: 36px; border: none;
+            background: transparent; color: #a1a1aa; cursor: pointer;
+            align-items: center; justify-content: center; border-radius: 8px;
+            transition: all 0.2s;
+        }
+        .hamburger-btn:hover { background: #2a2b35; color: #e4e4e7; }
+        .hamburger-btn svg { width: 20px; height: 20px; }
+
+        /* Scroll to bottom button */
+        .scroll-bottom-btn {
+            position: fixed; bottom: 90px; right: 24px; width: 36px; height: 36px;
+            border-radius: 50%; border: 1px solid #2a2b35; background: #1a1b23;
+            color: #a1a1aa; cursor: pointer; display: none; align-items: center;
+            justify-content: center; font-size: 18px; z-index: 50;
+            transition: all 0.2s; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        }
+        .scroll-bottom-btn:hover { background: #a855f720; color: #a855f7; border-color: #a855f7; }
+        .scroll-bottom-btn.visible { display: flex; }
+
+        /* Message timestamp */
+        .message .timestamp {
+            font-size: 10px; color: #52525b; margin-top: 4px; opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .message:hover .timestamp { opacity: 1; }
+
         /* Sidebar */
         .sidebar {
             width: 260px; background: #1a1b23; border-right: 1px solid #2a2b35;
@@ -71,11 +99,12 @@ const chatPageHTML = `<!DOCTYPE html>
         .chat-container { flex: 1; overflow-y: auto; padding: 20px 24px; scroll-behavior: smooth; }
 
         .welcome { text-align: center; padding: 60px 20px; }
+        .welcome-card { background: linear-gradient(135deg, #1a1b2380 0%, #a855f710 100%); border: 1px solid #a855f730; border-radius: 16px; padding: 40px 32px; display: inline-block; }
         .welcome h2 { font-size: 22px; color: #fff; margin-bottom: 8px; }
         .welcome p { color: #71717a; font-size: 13px; margin-bottom: 20px; }
         .capabilities { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; max-width: 550px; margin: 0 auto; }
-        .capability { padding: 10px 12px; border-radius: 8px; background: #1a1b23; border: 1px solid #2a2b35; font-size: 12px; color: #a1a1aa; cursor: pointer; transition: all 0.2s; }
-        .capability:hover { border-color: #a855f7; color: #e4e4e7; }
+        .capability { padding: 10px 12px; border-radius: 8px; background: #1a1b23; border: 1px solid #2a2b35; font-size: 12px; color: #a1a1aa; cursor: pointer; transition: all 0.2s; text-align: left; }
+        .capability:hover { border-color: #a855f7; color: #e4e4e7; background: #a855f710; transform: translateY(-1px); }
 
         .message { margin-bottom: 14px; display: flex; gap: 10px; animation: fadeIn 0.3s ease; }
         .message.user { justify-content: flex-end; }
@@ -118,19 +147,41 @@ const chatPageHTML = `<!DOCTYPE html>
 
         .voice-status { text-align: center; font-size: 11px; color: #ef4444; margin-top: 6px; display: none; }
 
+        /* Mobile sidebar backdrop */
+        .sidebar-backdrop {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+            z-index: 99; backdrop-filter: blur(2px);
+        }
+        .sidebar-backdrop.visible { display: block; }
+
         @media (max-width: 768px) {
-            .sidebar { display: none; }
-            .message .bubble { max-width: 85%; }
-            body { overflow: auto; height: 100%; }
-            .main { height: 100vh; min-height: 0; }
-            .chat-container { flex: 1; min-height: 0; }
+            .sidebar {
+                position: fixed; left: -280px; top: 0; z-index: 100;
+                width: 280px; height: 100%; height: 100dvh;
+                transition: left 0.28s cubic-bezier(.4,0,.2,1);
+                box-shadow: none;
+            }
+            .sidebar.open { left: 0; box-shadow: 6px 0 24px rgba(0,0,0,0.6); }
+            .hamburger-btn { display: flex; }
+            .message .bubble { max-width: 88%; font-size: 13px; }
+            body { overflow: hidden; height: 100%; height: 100dvh; }
+            .main { height: 100dvh; min-height: 0; }
+            .chat-container { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
             .input-area { position: sticky; bottom: 0; z-index: 10; flex-shrink: 0; }
+            .input-wrapper input::placeholder { font-size: 13px; }
+            .scroll-bottom-btn { right: 12px; bottom: 80px; }
+            /* Larger tap targets */
+            .session-item { padding: 13px 12px; }
+            .new-chat-btn { padding: 8px 14px; font-size: 13px; }
         }
     </style>
 </head>
 <body>
+    <!-- Mobile sidebar backdrop -->
+    <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()"></div>
+
     <!-- Sidebar -->
-    <div class="sidebar">
+    <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <h2>Chat History</h2>
             <button class="new-chat-btn" onclick="newSession()">+ New</button>
@@ -145,6 +196,9 @@ const chatPageHTML = `<!DOCTYPE html>
     <div class="main">
         <div class="header">
             <div class="header-left">
+                <button class="hamburger-btn" onclick="toggleSidebar()" title="Toggle sidebar">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
+                </button>
                 <h1>MCP Gateway AI</h1>
                 <span class="badge">Agent + RAG</span>
             </div>
@@ -153,18 +207,21 @@ const chatPageHTML = `<!DOCTYPE html>
 
         <div class="chat-container" id="chat-container">
             <div class="welcome" id="welcome">
-                <h2>Ask me anything</h2>
-                <p>Multi-step AI agent with 20 real tools. I remember our conversation.</p>
-                <div class="capabilities">
-                    <div class="capability" onclick="ask(this)">Weather in Tokyo</div>
-                    <div class="capability" onclick="ask(this)">Bitcoin price now</div>
-                    <div class="capability" onclick="ask(this)">Latest tech news</div>
-                    <div class="capability" onclick="ask(this)">Who is Elon Musk?</div>
-                    <div class="capability" onclick="ask(this)">Compare Delhi & Mumbai weather</div>
-                    <div class="capability" onclick="ask(this)">Save a note about my project</div>
+                <div class="welcome-card">
+                    <h2>Ask me anything</h2>
+                    <p>Multi-step AI agent with real tools. I remember our conversation.</p>
+                    <div class="capabilities">
+                        <div class="capability" onclick="ask(this)">Weather in Tokyo</div>
+                        <div class="capability" onclick="ask(this)">Bitcoin price now</div>
+                        <div class="capability" onclick="ask(this)">Latest tech news</div>
+                        <div class="capability" onclick="ask(this)">Who is Elon Musk?</div>
+                        <div class="capability" onclick="ask(this)">Compare Delhi &amp; Mumbai weather</div>
+                        <div class="capability" onclick="ask(this)">Save a note about my project</div>
+                    </div>
                 </div>
             </div>
         </div>
+        <button class="scroll-bottom-btn" id="scroll-bottom-btn" onclick="scrollToBottom()" title="Scroll to bottom">↓</button>
 
         <div class="typing" id="typing">
             <div class="dots"><span></span><span></span><span></span></div>
@@ -281,6 +338,7 @@ const chatPageHTML = `<!DOCTYPE html>
             localStorage.setItem('local_session_id', currentSessionId);
             renderSidebar();
             loadMessages(id);
+            closeSidebar(); // auto-close on mobile after picking a session
         }
 
         document.getElementById('sessions-list').onclick = function(e) {
@@ -321,6 +379,7 @@ const chatPageHTML = `<!DOCTYPE html>
             saveStoredMessages(messageStore);
             _syncLocalSidebar();
             _renderLocalMessages();
+            closeSidebar();
         }
 
         function newSession() {
@@ -423,23 +482,27 @@ const chatPageHTML = `<!DOCTYPE html>
             }
         }
 
+        function _escHtml(s) { const d = document.createElement('div'); d.textContent = String(s || ''); return d.innerHTML; }
+
         function addMessageToDOM(text, role, meta) {
             const div = document.createElement('div');
             div.className = 'message ' + role;
 
-            let metaHTML = '';
+            const now = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+            let metaHTML = '<div class="timestamp">' + now + '</div>';
+
             if (role === 'ai' && meta) {
                 if (meta.steps && meta.steps.length > 0) {
                     metaHTML += '<div class="steps">';
                     meta.steps.forEach(s => {
-                        const args = s.arguments ? Object.values(s.arguments).join(', ') : '';
-                        metaHTML += '<div class="step-item"><span class="step-dot"></span>' + s.tool_name + '(' + args + ')</div>';
+                        const args = s.arguments ? Object.values(s.arguments).map(_escHtml).join(', ') : '';
+                        metaHTML += '<div class="step-item"><span class="step-dot"></span>' + _escHtml(s.tool_name) + '(' + args + ')</div>';
                     });
                     metaHTML += '</div>';
                 }
                 metaHTML += '<div class="meta">';
-                if (meta.tools && meta.tools.length > 0) meta.tools.forEach(t => { metaHTML += '<span class="tool-badge">' + t + '</span>'; });
-                if (meta.latency) metaHTML += '<span class="latency-badge">' + meta.latency + 'ms</span>';
+                if (meta.tools && meta.tools.length > 0) meta.tools.forEach(t => { metaHTML += '<span class="tool-badge">' + _escHtml(t) + '</span>'; });
+                if (meta.latency) metaHTML += '<span class="latency-badge">' + _escHtml(String(meta.latency)) + 'ms</span>';
                 metaHTML += '</div>';
             }
 
@@ -541,8 +604,10 @@ const chatPageHTML = `<!DOCTYPE html>
             if (data.plan_tasks && data.plan_tasks.length > 0) {
                 planInfo = '<div class="steps"><strong>Planned tasks:</strong>';
                 data.plan_tasks.forEach(t => {
-                    const args = t.arguments ? Object.entries(t.arguments).map(([k,v]) => k+'='+v).join(', ') : '';
-                    planInfo += '<div class="step-item"><span class="step-dot"></span>' + t.tool + '(' + args + ') — ' + (t.description || '') + '</div>';
+                    const args = t.arguments
+                        ? Object.entries(t.arguments).map(([k,v]) => _escHtml(k)+'='+_escHtml(String(v))).join(', ')
+                        : '';
+                    planInfo += '<div class="step-item"><span class="step-dot"></span>' + _escHtml(t.tool) + '(' + args + ') — ' + _escHtml(t.description || '') + '</div>';
                 });
                 planInfo += '</div>';
             }
@@ -648,21 +713,58 @@ const chatPageHTML = `<!DOCTYPE html>
         }
 
         // ===== Helpers =====
-        function ask(el) { document.getElementById('user-input').value = el.textContent; sendMessage(); }
-        function scrollToBottom() { _chatContainer.scrollTop = _chatContainer.scrollHeight; }
+        function ask(el) {
+            if (document.getElementById('send-btn').disabled) return;
+            document.getElementById('user-input').value = el.textContent;
+            sendMessage();
+        }
+        function scrollToBottom() {
+            _chatContainer.scrollTop = _chatContainer.scrollHeight;
+            document.getElementById('scroll-bottom-btn').classList.remove('visible');
+        }
         function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+        function openSidebar() {
+            document.getElementById('sidebar').classList.add('open');
+            document.getElementById('sidebar-backdrop').classList.add('visible');
+        }
+        function closeSidebar() {
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('sidebar-backdrop').classList.remove('visible');
+        }
+        function toggleSidebar() {
+            const open = document.getElementById('sidebar').classList.contains('open');
+            open ? closeSidebar() : openSidebar();
+        }
+
+        // Scroll-to-bottom button visibility
+        _chatContainer.addEventListener('scroll', () => {
+            const btn = document.getElementById('scroll-bottom-btn');
+            const atBottom = _chatContainer.scrollHeight - _chatContainer.scrollTop - _chatContainer.clientHeight < 80;
+            if (atBottom) btn.classList.remove('visible');
+            else btn.classList.add('visible');
+        });
 
         var bt = function(){var c='',i=0;while(i<3){c+=String.fromCharCode(96);i++}return c;}();
 var codeBlockRE = new RegExp(bt+'([^]*?)'+bt, 'g');
         function formatText(text) {
+            // First escape all HTML entities, then selectively re-introduce safe tags.
+            // Using replacer functions ensures captured groups are always HTML-escaped.
             return text
                 .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<br><img src="$2" alt="$1" style="max-width:200px;border-radius:10px;margin:8px 0;border:1px solid #2a2b35;"><br>')
-                .replace(/(https:\/\/api\.qrserver\.com\/[^\s<]+)/g, '<br><a href="$1" target="_blank"><img src="$1" style="max-width:180px;border-radius:10px;margin:8px 0;"></a><br>')
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                .replace(codeBlockRE, '<code style="background:#2a2b35;padding:1px 4px;border-radius:3px;font-size:12px;">$1</code>')
-                .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" style="color:#a855f7;">$1</a>')
+                // Markdown images — escape alt text to prevent attribute injection
+                .replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, (_, alt, src) =>
+                    '<br><img src="' + _escHtml(src) + '" alt="' + _escHtml(alt) + '" style="max-width:200px;border-radius:10px;margin:8px 0;border:1px solid #2a2b35;"><br>')
+                // QR code images (URL already from trusted source but still escape)
+                .replace(/(https:\/\/api\.qrserver\.com\/[^\s<]+)/g, (_, u) =>
+                    '<br><a href="' + _escHtml(u) + '" target="_blank"><img src="' + _escHtml(u) + '" style="max-width:180px;border-radius:10px;margin:8px 0;"></a><br>')
+                // Bold and italic — escape inner content
+                .replace(/\*\*(.*?)\*\*/g, (_, m) => '<strong>' + _escHtml(m) + '</strong>')
+                .replace(/\*(.*?)\*/g, (_, m) => '<em>' + _escHtml(m) + '</em>')
+                // Inline code
+                .replace(codeBlockRE, (_, m) => '<code style="background:#2a2b35;padding:1px 4px;border-radius:3px;font-size:12px;">' + _escHtml(m) + '</code>')
+                // Markdown links — escape both label and URL
+                .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, href) =>
+                    '<a href="' + _escHtml(href) + '" target="_blank" style="color:#a855f7;">' + _escHtml(label) + '</a>')
                 .replace(/\n/g, '<br>');
         }
 

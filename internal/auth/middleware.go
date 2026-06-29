@@ -19,6 +19,13 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
+		// Allow CORS preflight through unconditionally — the CORS handler
+		// in server.go will add the response headers.
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Exact-match only — do NOT use HasPrefix here or "/" will match everything
 		switch path {
 		case "/", "/health", "/chat", "/api/auth/signup", "/api/auth/login":

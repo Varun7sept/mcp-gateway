@@ -81,7 +81,8 @@ func (a *Auth) ensureIndexes(ctx context.Context) error {
 }
 
 func (a *Auth) Signup(username, email, password string) (string, error) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -106,7 +107,8 @@ func (a *Auth) Signup(username, email, password string) (string, error) {
 }
 
 func (a *Auth) Login(username, password string) (string, error) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	var user User
 	err := a.users.FindOne(ctx, bson.M{"username": username}).Decode(&user)
 	if err != nil {
@@ -145,7 +147,8 @@ func (a *Auth) ValidateToken(tokenStr string) (string, error) {
 }
 
 func (a *Auth) GetUser(username string) (*User, error) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	var user User
 	err := a.users.FindOne(ctx, bson.M{"username": username}).Decode(&user)
 	if err != nil {
@@ -154,19 +157,22 @@ func (a *Auth) GetUser(username string) (*User, error) {
 	return &user, nil
 }
 
-// LogRequest stores a request log entry in MongoDB.
+// LogRequest stores a request log entry in MongoDB (best-effort, fire-and-forget).
 func (a *Auth) LogRequest(username, method, toolName, serverName, status, errMsg string, latency time.Duration) {
-	ctx := context.Background()
-	a.requestLogs.InsertOne(ctx, bson.M{
-		"username":    username,
-		"method":      method,
-		"tool_name":   toolName,
-		"server_name": serverName,
-		"status":      status,
-		"error":       errMsg,
-		"latency_ms":  latency.Milliseconds(),
-		"created_at":  time.Now(),
-	})
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		a.requestLogs.InsertOne(ctx, bson.M{
+			"username":    username,
+			"method":      method,
+			"tool_name":   toolName,
+			"server_name": serverName,
+			"status":      status,
+			"error":       errMsg,
+			"latency_ms":  latency.Milliseconds(),
+			"created_at":  time.Now(),
+		})
+	}()
 }
 
 // RequestLogEntry represents a stored request log.
@@ -184,7 +190,8 @@ type RequestLogEntry struct {
 // GetRequestStats returns aggregate stats for a user from MongoDB.
 // Pass empty username to get global stats.
 func (a *Auth) GetRequestStats(username string) map[string]any {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 	match := bson.M{}
 	if username != "" {
 		match = bson.M{"username": username}
@@ -208,6 +215,7 @@ func (a *Auth) GetRequestStats(username string) map[string]any {
 			"requests_by_tool": map[string]int{}, "requests_by_server": map[string]int{},
 		}
 	}
+	defer cursor.Close(ctx)
 	var results []bson.M
 	cursor.All(ctx, &results)
 
@@ -236,6 +244,7 @@ func (a *Auth) GetRequestStats(username string) map[string]any {
 		}}},
 	}
 	if tc, err := a.requestLogs.Aggregate(ctx, toolPipe); err == nil {
+		defer tc.Close(ctx)
 		var tres []bson.M
 		tc.All(ctx, &tres)
 		tmap := map[string]int{}
@@ -256,6 +265,7 @@ func (a *Auth) GetRequestStats(username string) map[string]any {
 		}}},
 	}
 	if sc, err := a.requestLogs.Aggregate(ctx, serverPipe); err == nil {
+		defer sc.Close(ctx)
 		var sres []bson.M
 		sc.All(ctx, &sres)
 		smap := map[string]int{}
@@ -272,7 +282,8 @@ func (a *Auth) GetRequestStats(username string) map[string]any {
 
 // RecentLogs returns the last N log entries for a user from MongoDB.
 func (a *Auth) RecentLogs(n int, username string) []RequestLogEntry {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	filter := bson.M{}
 	if username != "" {
 		filter = bson.M{"username": username}
@@ -282,6 +293,7 @@ func (a *Auth) RecentLogs(n int, username string) []RequestLogEntry {
 	if err != nil {
 		return nil
 	}
+	defer cursor.Close(ctx)
 	var raw []bson.M
 	cursor.All(ctx, &raw)
 	entries := make([]RequestLogEntry, 0, len(raw))

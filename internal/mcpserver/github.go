@@ -6,10 +6,13 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 )
+
+var githubHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 var githubToken = os.Getenv("GITHUB_TOKEN")
 
@@ -43,7 +46,7 @@ func handleGitHubTool(w http.ResponseWriter, req MCPRequest) {
 	case "get_user":
 		u, _ := args["username"].(string)
 		if u == "" { sendToolResult(w, req.ID, "Error: 'username' required", true); return }
-		r, err := githubAPI("/users/" + u)
+		r, err := githubAPI("/users/" + url.PathEscape(u))
 		if err != nil { sendToolResult(w, req.ID, "Error: "+err.Error(), true); return }
 		var user struct { Login, Name, Bio, Location, CreatedAt string; Followers, Following, PublicRepos int }
 		if err := json.Unmarshal(r, &user); err != nil { sendToolResult(w, req.ID, "Parse error", true); return }
@@ -54,7 +57,7 @@ func handleGitHubTool(w http.ResponseWriter, req MCPRequest) {
 		if sort == "" { sort = "stars" }
 		sp := "pushed"
 		if sort == "stars" { sp = "stars" } else if sort == "name" { sp = "full_name" }
-		body, err := githubAPI(fmt.Sprintf("/users/%s/repos?sort=%s&per_page=10", u, sp))
+		body, err := githubAPI(fmt.Sprintf("/users/%s/repos?sort=%s&per_page=10", url.PathEscape(u), url.QueryEscape(sp)))
 		if err != nil { sendToolResult(w, req.ID, "Error: "+err.Error(), true); return }
 		var repos []struct { Name, Description, Language, UpdatedAt string; Stars int; Fork bool }
 		json.Unmarshal(body, &repos)
@@ -64,7 +67,7 @@ func handleGitHubTool(w http.ResponseWriter, req MCPRequest) {
 	case "get_repo":
 		owner, _ := args["owner"].(string); repo, _ := args["repo"].(string)
 		if owner == "" || repo == "" { sendToolResult(w, req.ID, "Error: 'owner' and 'repo' required", true); return }
-		body, err := githubAPI(fmt.Sprintf("/repos/%s/%s", owner, repo))
+		body, err := githubAPI(fmt.Sprintf("/repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo)))
 		if err != nil { sendToolResult(w, req.ID, "Error: "+err.Error(), true); return }
 		var r struct { FullName, Description, Language, CreatedAt, UpdatedAt string; Stars, Forks, OpenIssues int; License struct{ Name string } `json:"license"`; Topics []string }
 		json.Unmarshal(body, &r)
@@ -76,12 +79,11 @@ func handleGitHubTool(w http.ResponseWriter, req MCPRequest) {
 }
 
 func githubAPI(path string) ([]byte, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
 	req, _ := http.NewRequest("GET", "https://api.github.com"+path, nil)
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "mcp-gateway")
 	if githubToken != "" { req.Header.Set("Authorization", "Bearer "+githubToken) }
-	resp, err := client.Do(req)
+	resp, err := githubHTTPClient.Do(req)
 	if err != nil { return nil, err }
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)

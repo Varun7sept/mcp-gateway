@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+var cryptoClient = &http.Client{Timeout: 10 * time.Second}
+
 var cryptoTools = []map[string]any{
 	{"name": "get_crypto_price", "description": "Get real-time price of any cryptocurrency", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"coin": map[string]any{"type": "string", "description": "Coin name (e.g., bitcoin, ethereum, solana)"}}, "required": []string{"coin"}}},
 	{"name": "get_top_cryptos", "description": "Get top 10 cryptocurrencies by market cap", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{}}},
@@ -51,8 +53,7 @@ func handleCryptoTool(w http.ResponseWriter, req MCPRequest) {
 }
 
 func fetchCrypto(coin string) (string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd,inr&include_24hr_change=true&include_market_cap=true", strings.ToLower(coin)))
+	resp, err := cryptoClient.Get(fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd,inr&include_24hr_change=true&include_market_cap=true", strings.ToLower(coin)))
 	if err != nil { return "", err }
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -66,8 +67,7 @@ func fetchCrypto(coin string) (string, error) {
 }
 
 func fetchTop() (string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1")
+	resp, err := cryptoClient.Get("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1")
 	if err != nil { return "", err }
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)

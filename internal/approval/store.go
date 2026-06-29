@@ -45,15 +45,22 @@ type Store struct {
 	pending  map[string]*ApprovalRequest
 	nextID   int
 	timeout  time.Duration
+	stopCh   chan struct{}
 }
 
 func NewStore(timeout time.Duration) *Store {
 	s := &Store{
 		pending: make(map[string]*ApprovalRequest),
 		timeout: timeout,
+		stopCh:  make(chan struct{}),
 	}
 	go s.reapLoop()
 	return s
+}
+
+// Close stops the background reaper goroutine.
+func (s *Store) Close() {
+	close(s.stopCh)
 }
 
 func (s *Store) IsRiskyTool(toolName string) (RiskLevel, bool) {
@@ -124,14 +131,14 @@ func (s *Store) Reject(id, username string) (*ApprovalRequest, error) {
 	return req, nil
 }
 
-func (s *Store) GetPending(username string) []*ApprovalRequest {
+func (s *Store) GetPending(username string) []ApprovalRequest {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var result []*ApprovalRequest
+	var result []ApprovalRequest
 	for _, req := range s.pending {
 		if req.Username == username && req.Status == StatusPending {
-			result = append(result, req)
+			result = append(result, *req) // return copy, not pointer into shared map
 		}
 	}
 	return result
@@ -170,17 +177,23 @@ func (s *Store) WaitForApproval(id, username string, pollInterval time.Duration)
 
 func (s *Store) reapLoop() {
 	ticker := time.NewTicker(30 * time.Second)
-	for range ticker.C {
-		s.mu.Lock()
-		now := time.Now()
-		for id, req := range s.pending {
-			if req.Status == StatusPending && now.After(req.ExpiresAt) {
-				req.Status = StatusTimedOut
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-ticker.C:
+			s.mu.Lock()
+			now := time.Now()
+			for id, req := range s.pending {
+				if req.Status == StatusPending && now.After(req.ExpiresAt) {
+					req.Status = StatusTimedOut
+				}
+				if req.Status != StatusPending && now.After(req.CreatedAt.Add(24*time.Hour)) {
+					delete(s.pending, id)
+				}
 			}
-			if req.Status != StatusPending && now.After(req.CreatedAt.Add(24 * time.Hour)) {
-				delete(s.pending, id)
-			}
+			s.mu.Unlock()
 		}
-		s.mu.Unlock()
 	}
 }
