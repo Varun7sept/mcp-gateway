@@ -88,6 +88,12 @@ func clientIP(r *http.Request) string {
 	return ip
 }
 
+// memMessage is a single chat turn stored in memory when MongoDB is unavailable.
+type memMessage struct {
+	Role    string
+	Content string
+}
+
 // Server is our HTTP server that wraps the Gateway logic.
 type Server struct {
 	gateway       *gateway.Gateway
@@ -97,6 +103,9 @@ type Server struct {
 	port          int
 	approvalStore *approval.Store
 	authLimiter   *rateLimiter
+	// memHistory holds per-session chat history when MongoDB is not configured.
+	memHistoryMu sync.RWMutex
+	memHistory   map[string][]memMessage
 }
 
 // New creates a new HTTP server.
@@ -107,6 +116,7 @@ func New(gw *gateway.Gateway, reqLogger *logger.Logger, aiBrain *ai.Brain, authe
 		brain:       aiBrain,
 		auth:        authenticator,
 		port:        port,
+		memHistory:  make(map[string][]memMessage),
 		authLimiter: newRateLimiter(time.Minute, 10), // 10 attempts per IP per minute
 	}
 }

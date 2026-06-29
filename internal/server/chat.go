@@ -49,7 +49,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var chatStore *auth.ChatStore
 	var approvedTools []string // tools the user approved in this request cycle
 
-	// Chat persistence requires MongoDB auth; skip if not configured
+	// Chat persistence requires MongoDB auth; use in-memory fallback otherwise.
 	if s.auth != nil {
 		chatStore = s.auth.ChatStore()
 
@@ -93,6 +93,19 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 		// Load recent messages for context (last 10)
 		history = buildHistoryFromMessages(chatStore, req.SessionID)
+	} else {
+		// No MongoDB — use in-memory history so the AI remembers previous turns.
+		s.memHistoryMu.RLock()
+		msgs := s.memHistory[req.SessionID]
+		s.memHistoryMu.RUnlock()
+		// Build history slice (all but the current user message we're about to add)
+		for _, m := range msgs {
+			history = append(history, map[string]string{"role": m.Role, "content": m.Content})
+		}
+		// Store the new user message
+		s.memHistoryMu.Lock()
+		s.memHistory[req.SessionID] = append(msgs, memMessage{Role: "user", Content: req.Message})
+		s.memHistoryMu.Unlock()
 	}
 
 	// Build orchestrator config with memory and approval store
@@ -158,6 +171,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if chatStore != nil {
 		chatStore.AddMessage(req.SessionID, "ai", orchResult.Answer, meta)
+	} else {
+		// Persist AI reply to in-memory history so follow-up questions have context.
+		s.memHistoryMu.Lock()
+		s.memHistory[req.SessionID] = append(s.memHistory[req.SessionID], memMessage{Role: "assistant", Content: orchResult.Answer})
+		// Cap history at 20 messages to avoid unbounded growth
+		if len(s.memHistory[req.SessionID]) > 20 {
+			s.memHistory[req.SessionID] = s.memHistory[req.SessionID][len(s.memHistory[req.SessionID])-20:]
+		}
+		s.memHistoryMu.Unlock()
 	}
 
 	s.logger.Log("chat", "", "", username, "success", "", chatLatency)
