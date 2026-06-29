@@ -47,6 +47,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if s.auth != nil {
 		chatStore = s.auth.ChatStore()
 
+		// Verify session ownership before any read/write
+		if _, err := chatStore.GetSession(req.SessionID, username); err != nil {
+			s.jsonResponse(w, http.StatusForbidden, map[string]string{
+				"error": "session not found or access denied",
+			})
+			return
+		}
+
 		// If continuing after approval, wait for approval before proceeding
 		if req.ApprovalID != "" && s.approvalStore != nil {
 			_, err := s.approvalStore.WaitForApproval(req.ApprovalID, username, 500*time.Millisecond)
