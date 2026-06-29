@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -185,6 +186,13 @@ func buildHistoryFromMessages(cs *auth.ChatStore, sessionID string) []map[string
 // --- Chat Session Management ---
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		s.jsonResponse(w, http.StatusOK, map[string]any{
+			"sessions": []any{},
+			"count":    0,
+		})
+		return
+	}
 	username, _ := auth.UserFromContext(r.Context())
 	sessions, err := s.auth.ChatStore().ListSessions(username)
 	if err != nil {
@@ -198,6 +206,13 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		s.jsonResponse(w, http.StatusCreated, map[string]any{
+			"id":    "local-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+			"title": "New Chat",
+		})
+		return
+	}
 	username, _ := auth.UserFromContext(r.Context())
 
 	var req struct {
@@ -217,6 +232,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
+		return
+	}
 	username, _ := auth.UserFromContext(r.Context())
 	id := r.PathValue("id")
 	if id == "" {
@@ -232,6 +251,13 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetMessages(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		s.jsonResponse(w, http.StatusOK, map[string]any{
+			"messages": []any{},
+			"count":    0,
+		})
+		return
+	}
 	username, _ := auth.UserFromContext(r.Context())
 	id := r.PathValue("id")
 	if id == "" {

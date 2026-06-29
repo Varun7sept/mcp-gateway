@@ -69,12 +69,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/stats", s.handleStats)
 	mux.HandleFunc("POST /mcp/message", s.handleMCPMessage)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
-	if s.auth != nil {
-		mux.HandleFunc("GET /api/chat/sessions", s.handleListSessions)
-		mux.HandleFunc("POST /api/chat/sessions", s.handleCreateSession)
-		mux.HandleFunc("DELETE /api/chat/sessions/{id}", s.handleDeleteSession)
-		mux.HandleFunc("GET /api/chat/sessions/{id}/messages", s.handleGetMessages)
-	}
+	mux.HandleFunc("GET /api/chat/sessions", s.handleListSessions)
+	mux.HandleFunc("POST /api/chat/sessions", s.handleCreateSession)
+	mux.HandleFunc("DELETE /api/chat/sessions/{id}", s.handleDeleteSession)
+	mux.HandleFunc("GET /api/chat/sessions/{id}/messages", s.handleGetMessages)
 	if s.approvalStore != nil {
 		mux.HandleFunc("GET /api/approvals/pending", s.handlePendingApprovals)
 		mux.HandleFunc("POST /api/approvals/{id}/approve", s.handleApproveAction)

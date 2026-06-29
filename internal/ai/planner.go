@@ -50,6 +50,8 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 				"8. CHOOSE ONLY ONE search-style tool per search intent. Example: for 'AI news' use EITHER search_news OR web_search, not both. Pick just one.\n" +
 				"9. MAXIMUM 3 TASKS TOTAL. Be focused and efficient.\n" +
 				"10. NEVER create tasks for both search_news AND web_search with similar queries. Pick exactly one.\n" +
+				"11. For queries about people, places, historical events, or factual topics — prefer wikipedia_summary over web_search. " +
+				"wikipedia_summary gives structured, reliable information. Use web_search only for news, current events, or niche topics unlikely to be on Wikipedia.\n" +
 				"Available tools: get_weather, get_forecast, get_user, list_repos, get_repo, add_note, list_notes, " +
 				"search_notes, get_crypto_price, get_top_cryptos, get_top_news, search_news, " +
 				"shorten_url, generate_qr, expand_url, web_search, wikipedia_summary, " +

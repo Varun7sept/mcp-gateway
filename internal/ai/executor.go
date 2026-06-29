@@ -86,7 +86,13 @@ func (b *Brain) executeWithRetry(task *TaskDefinition, callTool func(name string
 	resolveTemplates(task.Arguments, resolver)
 	result, err := callTool(task.Tool, task.Arguments)
 	if err == nil {
-		return result, nil
+		// noResults is a map of tools to result patterns that indicate empty results
+		noResults := map[string]string{"web_search": "No results for", "wikipedia_summary": "No Wikipedia article for"}
+		if prefix, isSearch := noResults[task.Tool]; isSearch && strings.HasPrefix(result, prefix) {
+			err = fmt.Errorf("%s", strings.TrimSpace(result))
+		} else {
+			return result, nil
+		}
 	}
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {

@@ -229,6 +229,8 @@ const chatPageHTML = `<!DOCTYPE html>
         }
 
         let _serverAvailable = false;
+        const _welcome = document.getElementById('welcome');
+        const _chatContainer = document.getElementById('chat-container');
 
         async function loadSessionsFromServer() {
             try {
@@ -247,11 +249,11 @@ const chatPageHTML = `<!DOCTYPE html>
         }
 
         function _syncLocalSidebar() {
+            renderSidebar(_buildAllSessions());
             const all = _buildAllSessions();
-            renderSidebar(all);
             if (all.length > 0) {
                 if (!all.find(s => s.id === currentSessionId)) {
-                    switchSession(all[0].id);
+                    doSwitch(all[0].id);
                 }
             } else if (_serverAvailable) {
                 createNewSession();
@@ -259,6 +261,25 @@ const chatPageHTML = `<!DOCTYPE html>
                 _newLocalSession();
             }
         }
+
+        function doSwitch(id) {
+            if (!id) return;
+            currentSessionId = id;
+            localStorage.setItem('local_session_id', currentSessionId);
+            renderSidebar();
+            loadMessages(id);
+        }
+
+        document.getElementById('sessions-list').onclick = function(e) {
+            const del = e.target.closest('.delete-btn');
+            if (del) {
+                e.stopPropagation();
+                deleteSession(del.dataset.did, e);
+                return;
+            }
+            const item = e.target.closest('.session-item');
+            if (item) doSwitch(item.dataset.sid);
+        };
 
         async function createNewSession() {
             try {
@@ -274,8 +295,7 @@ const chatPageHTML = `<!DOCTYPE html>
                 }
                 const session = await resp.json();
                 sessions.unshift(session);
-                _syncLocalSidebar();
-                switchSession(session.id);
+                doSwitch(session.id);
             } catch {}
         }
 
@@ -295,12 +315,6 @@ const chatPageHTML = `<!DOCTYPE html>
             else { _newLocalSession(); }
         }
 
-        async function switchSession(id) {
-            currentSessionId = id;
-            localStorage.setItem('local_session_id', currentSessionId);
-            await loadMessages(id);
-        }
-
         async function deleteSession(id, e) {
             e.stopPropagation();
             // Try server
@@ -316,15 +330,12 @@ const chatPageHTML = `<!DOCTYPE html>
             _syncLocalSidebar();
             const all = _buildAllSessions();
             if (currentSessionId === id) {
-                if (all.length > 0) switchSession(all[0].id);
+                if (all.length > 0) doSwitch(all[0].id);
                 else _newLocalSession();
             }
         }
 
         async function loadMessages(id) {
-            const container = document.getElementById('chat-container');
-            const welcome = document.getElementById('welcome');
-
             // Try server first
             try {
                 const resp = await fetch('/api/chat/sessions/' + id + '/messages', { headers: authHeaders() });
@@ -341,50 +352,65 @@ const chatPageHTML = `<!DOCTYPE html>
 
             // Fallback to local storage
             const localMsgs = messageStore[id] || [];
+            _chatContainer.textContent = '';
             if (localMsgs.length > 0) {
-                welcome.style.display = 'none';
-                container.innerHTML = '';
+                if (_welcome) _welcome.style.display = 'none';
                 localMsgs.forEach(m => addMessageToDOM(m.content, m.role, m.meta));
                 scrollToBottom();
                 return;
             }
 
-            welcome.style.display = 'block';
-            container.innerHTML = '';
-            container.appendChild(welcome);
+            if (_welcome) {
+                _welcome.style.display = 'block';
+                _chatContainer.appendChild(_welcome);
+            }
         }
 
         // ===== Rendering =====
         function renderSidebar(allSessions) {
             const list = document.getElementById('sessions-list');
-            list.innerHTML = (allSessions || _buildAllSessions()).map(s => {
-                const active = s.id === currentSessionId ? ' active' : '';
-                const time = s.created_at ? new Date(s.created_at).toLocaleDateString() : '';
-                return '<div class="session-item' + active + '" onclick="switchSession(\'' + s.id + '\')">' +
-                    '<div><div class="title">' + escapeHtml(s.title || 'Chat') + '</div><div class="time">' + time + '</div></div>' +
-                    '<span class="delete-btn" onclick="deleteSession(\'' + s.id + '\', event)">&times;</span>' +
-                '</div>';
-            }).join('');
+            if (!list) return;
+            const items = allSessions || _buildAllSessions();
+            list.textContent = '';
+            for (const s of items) {
+                const div = document.createElement('div');
+                div.className = 'session-item' + (s.id === currentSessionId ? ' active' : '');
+                div.dataset.sid = s.id;
+                const inner = document.createElement('div');
+                const titleEl = document.createElement('div');
+                titleEl.className = 'title';
+                titleEl.textContent = s.title || 'Chat';
+                const timeEl = document.createElement('div');
+                timeEl.className = 'time';
+                timeEl.textContent = s.created_at ? new Date(s.created_at).toLocaleDateString() : '';
+                inner.appendChild(titleEl);
+                inner.appendChild(timeEl);
+                const del = document.createElement('span');
+                del.className = 'delete-btn';
+                del.dataset.did = s.id;
+                del.textContent = '\u00D7';
+                div.appendChild(inner);
+                div.appendChild(del);
+                list.appendChild(div);
+            }
         }
 
         function _renderLocalMessages() {
-            const container = document.getElementById('chat-container');
-            const welcome = document.getElementById('welcome');
             const msgs = messageStore[currentSessionId] || [];
+            _chatContainer.textContent = '';
             if (msgs.length > 0) {
-                welcome.style.display = 'none';
-                container.innerHTML = '';
+                if (_welcome) _welcome.style.display = 'none';
                 msgs.forEach(m => addMessageToDOM(m.content, m.role, m.meta));
                 scrollToBottom();
             } else {
-                welcome.style.display = 'block';
-                container.innerHTML = '';
-                container.appendChild(welcome);
+                if (_welcome) {
+                    _welcome.style.display = 'block';
+                    _chatContainer.appendChild(_welcome);
+                }
             }
         }
 
         function addMessageToDOM(text, role, meta) {
-            const container = document.getElementById('chat-container');
             const div = document.createElement('div');
             div.className = 'message ' + role;
 
@@ -405,7 +431,7 @@ const chatPageHTML = `<!DOCTYPE html>
             }
 
             div.innerHTML = '<div class="bubble">' + formatText(text || '') + metaHTML + '</div>';
-            container.appendChild(div);
+            _chatContainer.appendChild(div);
         }
 
         // ===== Sending Messages =====
@@ -423,8 +449,7 @@ const chatPageHTML = `<!DOCTYPE html>
         }
 
         async function doSend(msg, approvalId) {
-            const welcome = document.getElementById('welcome');
-            if (welcome) welcome.style.display = 'none';
+            if (_welcome) _welcome.style.display = 'none';
 
             if (!approvalId) {
                 addMessageToDOM(msg, 'user');
@@ -495,7 +520,6 @@ const chatPageHTML = `<!DOCTYPE html>
         }
 
         function showApprovalPrompt(data) {
-            const container = document.getElementById('chat-container');
             const div = document.createElement('div');
             div.className = 'message ai';
             div.id = 'approval-prompt';
@@ -518,7 +542,7 @@ const chatPageHTML = `<!DOCTYPE html>
                 '<button class="send-btn" onclick="approveAction()" style="background:#22c55e;">Approve</button>' +
                 '<button class="send-btn" onclick="rejectAction()" style="background:#ef4444;">Reject</button>' +
                 '</div></div>';
-            container.appendChild(div);
+            _chatContainer.appendChild(div);
             scrollToBottom();
         }
 
@@ -612,7 +636,7 @@ const chatPageHTML = `<!DOCTYPE html>
 
         // ===== Helpers =====
         function ask(el) { document.getElementById('user-input').value = el.textContent; sendMessage(); }
-        function scrollToBottom() { const c = document.getElementById('chat-container'); c.scrollTop = c.scrollHeight; }
+        function scrollToBottom() { _chatContainer.scrollTop = _chatContainer.scrollHeight; }
         function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
 
         var bt = function(){var c='',i=0;while(i<3){c+=String.fromCharCode(96);i++}return c;}();
