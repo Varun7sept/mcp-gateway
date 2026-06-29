@@ -636,6 +636,7 @@ const dashboardHTML = `<!DOCTYPE html>
                 const u = data.username || localStorage.getItem('mcp_username');
                 setUserDisplay(u);
                 refreshAll();
+                startRefreshInterval();
             }
         }
 
@@ -743,11 +744,20 @@ const dashboardHTML = `<!DOCTYPE html>
             localStorage.removeItem('chat_messages');
             localStorage.removeItem('local_sessions');
             localStorage.removeItem('local_session_id');
+            // Stop the refresh interval so it doesn't fire after logout
+            if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
             document.getElementById('userInfo').style.display = 'none';
             showAuthOverlay();
         }
 
-        // Check auth on load
+        // Check auth on load — start refresh interval only after auth is confirmed
+        let refreshInterval = null;
+        function startRefreshInterval() {
+            if (!refreshInterval) {
+                refreshInterval = setInterval(refreshAll, 5000);
+            }
+        }
+
         const savedToken = getToken();
         if (savedToken) {
             fetch(API_BASE + '/api/auth/me', { headers: { 'Authorization': 'Bearer ' + savedToken } })
@@ -757,10 +767,12 @@ const dashboardHTML = `<!DOCTYPE html>
                         const uname = localStorage.getItem('mcp_username');
                         if (uname) setUserDisplay(uname);
                         refreshAll();
+                        startRefreshInterval();
                     } else if (r.status === 503) {
                         clearToken();
                         hideAuthOverlay();
                         refreshAll();
+                        startRefreshInterval();
                     } else {
                         clearToken();
                         showAuthOverlay();
@@ -775,13 +787,13 @@ const dashboardHTML = `<!DOCTYPE html>
                         // Auth disabled — skip login
                         hideAuthOverlay();
                         refreshAll();
+                        startRefreshInterval();
                     } else {
                         showAuthOverlay();
                     }
                 })
                 .catch(() => { showAuthOverlay(); });
         }
-        setInterval(refreshAll, 2000);
 
         // --- Tab Switching ---
         function switchTab(tab) {
