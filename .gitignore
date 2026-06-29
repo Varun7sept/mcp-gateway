@@ -32,3 +32,4 @@ examples/docs-server/chroma_db/
 
 # Temp
 tmp/
+*~
