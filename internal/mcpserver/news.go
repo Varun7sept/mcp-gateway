@@ -13,7 +13,7 @@ import (
 )
 
 type RSS struct { Channel struct { Items []RSSItem `xml:"item"` } `xml:"channel"` }
-type RSSItem struct { Title, Link, PubDate, Source string }
+type RSSItem struct { Title string `xml:"title"`; Link string `xml:"link"`; PubDate string `xml:"pubDate"`; Source string `xml:"source"` }
 
 var newsTools = []map[string]any{
 	{"name": "get_top_news", "description": "Get today's top news headlines", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"topic": map[string]any{"type": "string", "description": "Topic: general, technology, business, sports, science, health"}}}},

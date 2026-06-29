@@ -39,10 +39,9 @@ func (b *Brain) WithMemory(m MemoryStore) *Brain {
 // New creates a new AI Brain with the given Groq API key.
 func New(apiKey string) *Brain {
 	models := []string{
+		"llama-3.3-70b-versatile",
 		"qwen/qwen3-32b",
 		"qwen/qwen3.6-27b",
-		"openai/gpt-oss-20b",
-		"openai/gpt-oss-120b",
 	}
 	if configured := strings.TrimSpace(os.Getenv("GROQ_MODELS")); configured != "" {
 		models = nil

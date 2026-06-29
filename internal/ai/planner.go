@@ -89,11 +89,38 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 		return nil, fmt.Errorf("failed to parse plan JSON: %w\nRaw: %s", err, content)
 	}
 
-	result := &Plan{Goal: goal}
+	searchTools := map[string]bool{"search_news": true, "web_search": true, "wikipedia_summary": true}
+	seenSearch := map[string]bool{}
+	var filtered []struct {
+		ID           int            `json:"id"`
+		Description  string         `json:"description"`
+		Tool         string         `json:"tool"`
+		Arguments    map[string]any `json:"arguments"`
+		Dependencies []int          `json:"depends_on"`
+	}
 	for _, t := range plan.Tasks {
 		if t.Tool == "" {
 			continue
 		}
+		if searchTools[t.Tool] {
+			q, _ := t.Arguments["query"].(string)
+			if q == "" {
+				continue // skip search tasks with no query
+			}
+			key := t.Tool + ":" + q
+			if seenSearch[key] {
+				continue // deduplicate same tool+query
+			}
+			seenSearch[key] = true
+		}
+		filtered = append(filtered, t)
+	}
+	if len(filtered) > 3 {
+		filtered = filtered[:3]
+	}
+
+	result := &Plan{Goal: goal}
+	for _, t := range filtered {
 		result.Tasks = append(result.Tasks, &TaskDefinition{
 			ID:           t.ID,
 			Description:  t.Description,

@@ -228,18 +228,22 @@ const chatPageHTML = `<!DOCTYPE html>
             return [...sessions, ...local];
         }
 
+        let _serverAvailable = false;
+
         async function loadSessionsFromServer() {
             try {
                 const resp = await fetch('/api/chat/sessions', { headers: authHeaders() });
                 if (resp.status === 401) { window.location.href = '/'; return; }
                 if (resp.status === 404 || resp.status === 405) {
+                    _serverAvailable = false;
                     _syncLocalSidebar();
                     return;
                 }
                 const data = await resp.json();
                 sessions = data.sessions || [];
+                _serverAvailable = true;
                 _syncLocalSidebar();
-            } catch { sessions = []; _syncLocalSidebar(); }
+            } catch { sessions = []; _serverAvailable = false; _syncLocalSidebar(); }
         }
 
         function _syncLocalSidebar() {
@@ -249,6 +253,8 @@ const chatPageHTML = `<!DOCTYPE html>
                 if (!all.find(s => s.id === currentSessionId)) {
                     switchSession(all[0].id);
                 }
+            } else if (_serverAvailable) {
+                createNewSession();
             } else {
                 _newLocalSession();
             }
@@ -285,7 +291,8 @@ const chatPageHTML = `<!DOCTYPE html>
         }
 
         function newSession() {
-            _newLocalSession();
+            if (_serverAvailable) { createNewSession(); }
+            else { _newLocalSession(); }
         }
 
         async function switchSession(id) {
