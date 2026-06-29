@@ -376,7 +376,7 @@ const dashboardHTML = `<!DOCTYPE html>
         </div>
     </div>
 
-    <div class="container">
+    <div class="container" style="display:none;">
         <!-- Stats -->
         <div class="stats-grid">
             <div class="stat-card">

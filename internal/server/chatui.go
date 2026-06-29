@@ -121,6 +121,10 @@ const chatPageHTML = `<!DOCTYPE html>
         @media (max-width: 768px) {
             .sidebar { display: none; }
             .message .bubble { max-width: 85%; }
+            body { overflow: auto; height: 100%; }
+            .main { height: 100vh; min-height: 0; }
+            .chat-container { flex: 1; min-height: 0; }
+            .input-area { position: sticky; bottom: 0; z-index: 10; flex-shrink: 0; }
         }
     </style>
 </head>
