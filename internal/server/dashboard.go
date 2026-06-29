@@ -739,6 +739,10 @@ const dashboardHTML = `<!DOCTYPE html>
         function handleLogout() {
             clearToken();
             localStorage.removeItem('mcp_username');
+            // Clear all chat data so the next user doesn't see this user's history
+            localStorage.removeItem('chat_messages');
+            localStorage.removeItem('local_sessions');
+            localStorage.removeItem('local_session_id');
             document.getElementById('userInfo').style.display = 'none';
             showAuthOverlay();
         }
