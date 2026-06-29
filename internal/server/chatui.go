@@ -250,6 +250,26 @@ const chatPageHTML = `<!DOCTYPE html>
         // ===== Auth =====
         function getToken() { return localStorage.getItem('mcp_token'); }
         function authHeaders() { return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() }; }
+
+        function tokenExpiresAt(token) {
+            try {
+                const p = JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+                return p.exp || 0;
+            } catch { return 0; }
+        }
+        async function silentRefresh() {
+            const token = getToken();
+            if (!token) return;
+            const exp = tokenExpiresAt(token);
+            if (!exp || exp - Math.floor(Date.now()/1000) > 24*3600) return;
+            try {
+                const resp = await fetch('/api/auth/refresh', { method:'POST', headers:{'Authorization':'Bearer '+token} });
+                if (resp.ok) { const d = await resp.json(); if (d.token) localStorage.setItem('mcp_token', d.token); }
+            } catch {}
+        }
+        silentRefresh();
+        setInterval(silentRefresh, 60 * 60 * 1000);
+
         function clearChatStorage() {
             localStorage.removeItem('chat_messages');
             localStorage.removeItem('local_sessions');

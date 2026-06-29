@@ -319,9 +319,20 @@ func (a *Auth) generateToken(username string) (string, error) {
 	claims := jwt.MapClaims{
 		"sub": username,
 		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(24 * time.Hour).Unix(),
+		"exp": time.Now().Add(7 * 24 * time.Hour).Unix(), // 7-day token
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(a.jwtSecret)
+}
+
+// RefreshToken validates the existing token and issues a fresh one with a new
+// 7-day expiry. Both the old and new tokens are independently valid until the
+// old one expires, so multiple devices stay logged in simultaneously.
+func (a *Auth) RefreshToken(tokenStr string) (string, error) {
+	username, err := a.ValidateToken(tokenStr)
+	if err != nil {
+		return "", fmt.Errorf("invalid or expired token")
+	}
+	return a.generateToken(username)
 }
