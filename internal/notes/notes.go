@@ -120,6 +120,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMCPMessage(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1*1024*1024) // 1 MB limit
 	var req MCPRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendError(w, req.ID, -32700, "Parse error")
@@ -171,6 +172,9 @@ func (s *Server) handleToolCall(w http.ResponseWriter, req MCPRequest) {
 		limit := 20
 		if l, ok := arguments["limit"].(float64); ok && l > 0 {
 			limit = int(l)
+			if limit > 100 {
+				limit = 100 // cap to prevent expensive unbounded queries
+			}
 		}
 		var rows *sql.Rows
 		var err error

@@ -32,6 +32,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		s.jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "message is required"})
 		return
 	}
+	if len(req.Message) > 10000 {
+		s.jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "message too long (max 10000 characters)"})
+		return
+	}
 	if req.SessionID == "" {
 		s.jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "session_id is required"})
 		return
