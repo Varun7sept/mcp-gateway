@@ -213,8 +213,12 @@ func (b *Brain) compileResults(plan *Plan, report *ExecutionReport, userMessage 
 	summaryMessages := []Message{
 		{
 			Role: "system",
-			Content: "Summarize the following tool results into a clear, conversational answer. " +
-				"Be concise but include all key information.",
+			Content: "You are given tool results for the user's question. " +
+				"If the question asked you to search and summarize, extract key information from the search results and present a clear summary. " +
+				"If search results contain article titles, snippets, and URLs, use them to form a useful answer. " +
+				"Format information cleanly with bullet points where appropriate. " +
+				"If a search returned no results, say so and suggest an alternative. " +
+				"Be conversational and concise but informative.",
 		},
 		{Role: "user", Content: fmt.Sprintf("Question: %s\n\nResults:\n%s", userMessage, finalAnswer)},
 	}

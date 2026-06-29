@@ -44,7 +44,10 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 				"3. Each task must specify exactly ONE tool to call\n" +
 				"4. If no tools are needed (simple Q&A), return an empty tasks array\n" +
 				"5. For multi-part questions like 'weather in London and Paris', create separate tasks for each\n" +
-				"6. For questions that need information gathering then processing, create dependent tasks\n" +
+				"6. For 'search and summarize' requests, create ONE search task. The summarization will be done automatically.\n" +
+				"7. CHOOSE ONLY ONE search-style tool per search intent. Example: for 'AI news' use EITHER search_news OR web_search, not both. Pick just one.\n" +
+				"8. MAXIMUM 3 TASKS TOTAL. Be focused and efficient.\n" +
+				"9. NEVER create tasks for both search_news AND web_search with similar queries. Pick exactly one.\n" +
 				"Available tools: get_weather, get_forecast, get_user, list_repos, get_repo, add_note, list_notes, " +
 				"search_notes, get_crypto_price, get_top_cryptos, get_top_news, search_news, " +
 				"shorten_url, generate_qr, expand_url, web_search, wikipedia_summary, " +
