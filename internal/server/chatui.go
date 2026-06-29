@@ -147,23 +147,41 @@ const chatPageHTML = `<!DOCTYPE html>
 
         .voice-status { text-align: center; font-size: 11px; color: #ef4444; margin-top: 6px; display: none; }
 
+        /* Mobile sidebar backdrop */
+        .sidebar-backdrop {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+            z-index: 99; backdrop-filter: blur(2px);
+        }
+        .sidebar-backdrop.visible { display: block; }
+
         @media (max-width: 768px) {
-            .sidebar { position: fixed; left: -260px; top: 0; z-index: 100; height: 100vh; transition: left 0.3s ease; }
-            .sidebar.open { left: 0; box-shadow: 4px 0 20px rgba(0,0,0,0.5); }
+            .sidebar {
+                position: fixed; left: -280px; top: 0; z-index: 100;
+                width: 280px; height: 100%; height: 100dvh;
+                transition: left 0.28s cubic-bezier(.4,0,.2,1);
+                box-shadow: none;
+            }
+            .sidebar.open { left: 0; box-shadow: 6px 0 24px rgba(0,0,0,0.6); }
             .hamburger-btn { display: flex; }
-            .message .bubble { max-width: 85%; }
-            body { overflow: auto; height: 100%; }
-            .main { height: 100vh; min-height: 0; }
-            .chat-container { flex: 1; min-height: 0; }
+            .message .bubble { max-width: 88%; font-size: 13px; }
+            body { overflow: hidden; height: 100%; height: 100dvh; }
+            .main { height: 100dvh; min-height: 0; }
+            .chat-container { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
             .input-area { position: sticky; bottom: 0; z-index: 10; flex-shrink: 0; }
             .input-wrapper input::placeholder { font-size: 13px; }
             .scroll-bottom-btn { right: 12px; bottom: 80px; }
+            /* Larger tap targets */
+            .session-item { padding: 13px 12px; }
+            .new-chat-btn { padding: 8px 14px; font-size: 13px; }
         }
     </style>
 </head>
 <body>
+    <!-- Mobile sidebar backdrop -->
+    <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()"></div>
+
     <!-- Sidebar -->
-    <div class="sidebar">
+    <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <h2>Chat History</h2>
             <button class="new-chat-btn" onclick="newSession()">+ New</button>
@@ -320,6 +338,7 @@ const chatPageHTML = `<!DOCTYPE html>
             localStorage.setItem('local_session_id', currentSessionId);
             renderSidebar();
             loadMessages(id);
+            closeSidebar(); // auto-close on mobile after picking a session
         }
 
         document.getElementById('sessions-list').onclick = function(e) {
@@ -360,6 +379,7 @@ const chatPageHTML = `<!DOCTYPE html>
             saveStoredMessages(messageStore);
             _syncLocalSidebar();
             _renderLocalMessages();
+            closeSidebar();
         }
 
         function newSession() {
@@ -701,7 +721,18 @@ const chatPageHTML = `<!DOCTYPE html>
             document.getElementById('scroll-bottom-btn').classList.remove('visible');
         }
         function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
-        function toggleSidebar() { document.querySelector('.sidebar').classList.toggle('open'); }
+        function openSidebar() {
+            document.getElementById('sidebar').classList.add('open');
+            document.getElementById('sidebar-backdrop').classList.add('visible');
+        }
+        function closeSidebar() {
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('sidebar-backdrop').classList.remove('visible');
+        }
+        function toggleSidebar() {
+            const open = document.getElementById('sidebar').classList.contains('open');
+            open ? closeSidebar() : openSidebar();
+        }
 
         // Scroll-to-bottom button visibility
         _chatContainer.addEventListener('scroll', () => {
