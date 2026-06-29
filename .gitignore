@@ -1,5 +1,10 @@
 # Binaries
 mcp-gateway
+*.exe
+
+# Logs
+*.log
+*.err
 examples/*/crypto-server
 examples/*/news-server
 examples/*/search-server
