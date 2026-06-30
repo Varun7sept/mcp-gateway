@@ -85,6 +85,53 @@ func (b *Brain) ProcessWithOrchestrator(
 
 	report := b.ExecutePlan(plan, callTool)
 
+	// Retry loop: if any tasks failed, give the AI one chance to re-plan
+	// with knowledge of what failed and why, so it can try a different tool.
+	if report != nil && !report.Complete {
+		var failedDescriptions []string
+		for _, task := range plan.Tasks {
+			if task.Status == TaskFailed {
+				failedDescriptions = append(failedDescriptions,
+					fmt.Sprintf("tool '%s' failed: %s", task.Tool, task.Error))
+			}
+		}
+		if len(failedDescriptions) > 0 {
+			retryHint := fmt.Sprintf(
+				"%s\n\nThe following tools failed: %s\n\nPlease replan using DIFFERENT tools to accomplish the same goal. Do not retry the same failed tools.",
+				userMessage, strings.Join(failedDescriptions, "; "),
+			)
+			retryPlan, retryErr := b.DecomposeGoal(retryHint, messages)
+			if retryErr == nil && len(retryPlan.Tasks) > 0 {
+				// Only use retry plan if it actually uses different tools
+				usesNewTools := false
+				failedTools := make(map[string]bool)
+				for _, t := range plan.Tasks {
+					if t.Status == TaskFailed {
+						failedTools[t.Tool] = true
+					}
+				}
+				for _, t := range retryPlan.Tasks {
+					if !failedTools[t.Tool] {
+						usesNewTools = true
+						break
+					}
+				}
+				if usesNewTools {
+					retryReport := b.ExecutePlan(retryPlan, callTool)
+					// Merge successful retry results into original plan
+					for _, retryTask := range retryPlan.Tasks {
+						if retryTask.Status == TaskDone {
+							plan.Tasks = append(plan.Tasks, retryTask)
+						}
+					}
+					if retryReport != nil {
+						report = retryReport
+					}
+				}
+			}
+		}
+	}
+
 	finalAnswer, steps := b.compileResults(plan, report, userMessage, start)
 
 	if cfg != nil && cfg.Memory != nil {
