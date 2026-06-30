@@ -38,7 +38,7 @@ Browser / API Client
 - **Human-in-the-loop** — risky actions require user approval before executing
 - **Self-correction** — on tool errors, suggests and tries alternative approaches
 
-### 🛠️ 17 Real Tools
+### 🛠️ 20 Real Tools
 | Category | Tools |
 |---|---|
 | **Weather** | `get_weather`, `get_forecast` — real-time via wttr.in |
@@ -47,7 +47,7 @@ Browser / API Client
 | **News** | `get_top_news`, `search_news` — live RSS feeds |
 | **Search** | `web_search` (DuckDuckGo), `wikipedia_summary` |
 | **Notes** | `add_note`, `list_notes`, `search_notes` — SQLite |
-| **URLs** | `shorten_url`, `generate_qr`, `expand_url` |
+| **URLs** | `shorten_url`, `generate_qr`, `expand_url` — TinyURL + QR codes |
 | **Documents** | `upload_document`, `ask_document`, `list_documents` — RAG |
 
 ### 💬 Chat UI

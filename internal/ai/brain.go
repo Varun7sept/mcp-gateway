@@ -239,6 +239,9 @@ func GetAvailableTools() []ToolDef {
 		makeTool("generate_qr", "Generate a QR code image for any text, URL, or data. Returns an image URL.", map[string]any{
 			"text": map[string]any{"type": "string", "description": "Text or URL to encode into the QR code"},
 		}, []string{"text"}),
+		makeTool("expand_url", "Resolve a shortened URL (bit.ly, tinyurl, etc.) to see its full destination URL", map[string]any{
+			"url": map[string]any{"type": "string", "description": "The shortened URL to expand (must start with http:// or https://)"},
+		}, []string{"url"}),
 		makeTool("web_search", "Search the internet for real-time or niche info: current stats, recent events, prices, or topics not well covered by Wikipedia.", map[string]any{
 			"query": map[string]any{"type": "string", "description": "Search query, e.g. 'population of Japan 2024' or 'latest iPhone price India'"},
 		}, []string{"query"}),
