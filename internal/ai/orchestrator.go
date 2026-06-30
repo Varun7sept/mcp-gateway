@@ -246,16 +246,21 @@ func (b *Brain) handleNoTools(userMessage string, messages []Message, callTool f
 		return b.fallbackToDirect(userMessage, messages, callTool, start)
 	}
 
-	// Has history = follow-up question → answer from conversation context
+	// Has history = follow-up question → try to answer from conversation context.
+	// But if the specific detail isn't in the history, the model must say
+	// "NEED_TOOL" so we can fall back to the tool agent instead of guessing.
 	contextMessages := make([]Message, 0, len(messages))
 	for _, m := range messages {
 		if m.Role == "system" && strings.Contains(m.Content, "You are an intelligent AI assistant") {
 			contextMessages = append(contextMessages, Message{
 				Role: "system",
-				Content: "You are a helpful AI assistant. Answer the user's follow-up question using the conversation history above. " +
-					"The history contains previous questions and answers — use that information to respond accurately. " +
-					"Do NOT say you need to search for information if it is already present in the conversation. " +
-					"Be concise and direct. Do not use <think> tags.",
+				Content: "You are a helpful AI assistant. Answer the user's follow-up question using the conversation history above.\n\n" +
+					"RULES:\n" +
+					"1. If the specific fact the user is asking about IS present in the history, answer it directly and concisely.\n" +
+					"2. If the specific fact is NOT in the history (e.g. user asks for a date/stat that was never mentioned), " +
+					"respond with exactly: NEED_TOOL\n" +
+					"3. Never guess or make up facts. Never say 'I don't have tools' — just say NEED_TOOL if you need more info.\n" +
+					"4. Do not use <think> tags.",
 			})
 		} else {
 			contextMessages = append(contextMessages, m)
@@ -264,13 +269,15 @@ func (b *Brain) handleNoTools(userMessage string, messages []Message, callTool f
 
 	choice, err := b.callGroq(contextMessages)
 	if err != nil {
-		// Even context answering failed — fall back to tool agent
 		return b.fallbackToDirect(userMessage, messages, callTool, start)
 	}
 	answer := stripThinkTags(choice.Content)
-	if strings.TrimSpace(answer) == "" {
+
+	// If the model says it needs a tool, or answer is empty → use tool agent
+	if strings.TrimSpace(answer) == "" || strings.Contains(strings.ToUpper(answer), "NEED_TOOL") {
 		return b.fallbackToDirect(userMessage, messages, callTool, start)
 	}
+
 	return &OrchestratorResult{
 		Answer: answer,
 	}, nil
