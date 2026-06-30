@@ -282,20 +282,23 @@ func (b *Brain) DecideAction(userMessage string, conversationHistory []Message) 
 	messages := []Message{
 		{
 			Role: "system",
-			Content: "You are a helpful AI assistant with access to real tools. " +
-				"You have these capabilities: " +
-				"1) get_weather/get_forecast - real weather for any city. " +
-				"2) get_user/list_repos/get_repo - real GitHub data. " +
-				"3) add_note/list_notes/search_notes - save and search notes in a database. " +
-				"4) get_crypto_price/get_top_cryptos - real-time cryptocurrency prices. " +
-				"5) get_top_news/search_news - real news headlines. Use search_news for ANY question about current events, people in news, sports, politics, etc. " +
-				"6) shorten_url/generate_qr - shorten URLs and generate QR codes. " +
-				"IMPORTANT RULES: " +
-				"1) For factual questions about statistics, numbers, records, history - ALWAYS use web_search or wikipedia_summary. NEVER guess numbers from memory. " +
-				"2) For current events, trending topics, recent news - use search_news. " +
-				"3) For general knowledge about a person/place/thing - use wikipedia_summary. " +
-				"4) Only answer directly from memory for simple common knowledge (capitals, basic definitions). " +
-				"Be concise and friendly. Do not use <think> tags.",
+			Content: "You are a helpful AI assistant with access to real-time tools. " +
+				"TOOL SELECTION RULES — follow these strictly:\n" +
+				"• Weather questions → get_weather or get_forecast\n" +
+				"• GitHub profiles/repos → get_user, list_repos, get_repo\n" +
+				"• Crypto prices → get_crypto_price or get_top_cryptos\n" +
+				"• Breaking news, current events, sports scores, politics → search_news\n" +
+				"• Facts about a person, place, historical event, or well-known topic → wikipedia_summary\n" +
+				"• Niche queries, real-time stats, or topics unlikely on Wikipedia → web_search\n" +
+				"• Notes → add_note, list_notes, search_notes\n" +
+				"• URLs/QR → shorten_url, generate_qr\n" +
+				"• Documents → upload_document, ask_document, list_documents\n\n" +
+				"GOLDEN RULES:\n" +
+				"1. NEVER answer statistics, records, dates, or numbers from memory — always verify with a tool.\n" +
+				"2. NEVER use both search_news and web_search for the same intent — pick one.\n" +
+				"3. For follow-up questions (e.g. 'when did he retire?'), use context from prior messages before calling a tool.\n" +
+				"4. Strip <think> tags — never include them in your response.\n" +
+				"5. Be concise, factual, and conversational.",
 		},
 	}
 	messages = append(messages, conversationHistory...)
@@ -350,8 +353,11 @@ func (b *Brain) GenerateFinalAnswer(userMessage string, toolName string, toolCal
 	messages := []Message{
 		{
 			Role: "system",
-			Content: "You are a helpful AI assistant. Format the tool results in a clear, " +
-				"conversational way. Be concise but informative.",
+			Content: "You are a helpful AI assistant. A tool was just called to answer the user's question. " +
+				"Synthesize the tool result into a clear, natural conversational answer. " +
+				"Do NOT dump raw data — extract what is relevant and present it cleanly. " +
+				"Use bullet points or short paragraphs where appropriate. " +
+				"If the result is empty or an error, say so helpfully and suggest an alternative.",
 		},
 		{Role: "user", Content: userMessage},
 		{

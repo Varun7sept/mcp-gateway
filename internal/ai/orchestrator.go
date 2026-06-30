@@ -114,12 +114,13 @@ func (b *Brain) buildAgentMessages(userMessage string, history []map[string]stri
 	messages := []Message{
 		{
 			Role: "system",
-			Content: "You are an intelligent AI agent with access to real tools. " +
-				"You can call MULTIPLE tools to answer complex questions. " +
-				"For multi-part questions, call tools one by one to gather all needed information. " +
-				"After gathering enough data, provide a comprehensive final answer. " +
-				"Be concise and friendly. Do not use <think> tags. " +
-				"Available capabilities: weather, crypto prices, news, GitHub, web search, Wikipedia, notes, URL tools, document RAG.",
+			Content: "You are an intelligent AI assistant with access to real-time tools.\n\n" +
+				"Capabilities: weather forecasts, GitHub data, crypto prices, news, web search, Wikipedia, notes, URL shortener/QR, document Q&A.\n\n" +
+				"BEHAVIOUR:\n" +
+				"• Use conversation history to answer follow-up questions without re-calling tools unnecessarily.\n" +
+				"• When you do need a tool, choose the most specific one (e.g. wikipedia_summary for facts, search_news for current events).\n" +
+				"• Never output raw tool JSON or <think> tags — always respond in natural language.\n" +
+				"• If the user's question can be answered from prior context, answer directly without tools.",
 		},
 	}
 	for _, h := range history {
@@ -225,14 +226,17 @@ func (b *Brain) compileResults(plan *Plan, report *ExecutionReport, userMessage 
 	summaryMessages := []Message{
 		{
 			Role: "system",
-			Content: "You are given tool results for the user's question. " +
-				"If the question asked you to search and summarize, extract key information from the search results and present a clear summary. " +
-				"If search results contain article titles, snippets, and URLs, use them to form a useful answer. " +
-				"Format information cleanly with bullet points where appropriate. " +
-				"If a search returned no results, say so and suggest an alternative. " +
-				"Be conversational and concise but informative.",
+			Content: "You are an AI assistant that synthesizes tool results into a helpful, natural answer.\n\n" +
+				"RULES:\n" +
+				"1. NEVER output raw tool result text like 'Tool X result: ...' — always synthesize into a proper answer.\n" +
+				"2. Answer the user's question directly using the data from the tool results.\n" +
+				"3. If results include lists (news articles, repos, etc.), present them as clean bullet points with the most important details.\n" +
+				"4. If multiple tools ran, combine their results into ONE coherent answer — don't repeat the question back.\n" +
+				"5. If a tool returned an error or empty result, acknowledge it briefly and move on.\n" +
+				"6. Be concise but complete. Aim for 2–6 sentences or a short bulleted list.\n" +
+				"7. Do not include <think> tags or meta-commentary about what tools were used.",
 		},
-		{Role: "user", Content: fmt.Sprintf("Question: %s\n\nResults:\n%s", userMessage, finalAnswer)},
+		{Role: "user", Content: fmt.Sprintf("User asked: %s\n\nTool results:\n%s\n\nNow write a helpful answer:", userMessage, finalAnswer)},
 	}
 
 	summaryResp, err := b.callGroq(summaryMessages)
