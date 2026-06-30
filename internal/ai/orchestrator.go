@@ -229,16 +229,30 @@ func (b *Brain) fallbackToDirect(userMessage string, messages []Message, callToo
 }
 
 func (b *Brain) handleNoTools(userMessage string, messages []Message, callTool func(name string, args map[string]any) (string, error), start time.Time) (*OrchestratorResult, error) {
-	// Inject an explicit instruction to answer from conversation history.
-	// This is the path taken for follow-up questions — the planner returned
-	// no tasks because the answer should already be in the prior context.
-	contextMessages := make([]Message, 0, len(messages)+1)
+	// Count how many non-system messages are in history.
+	// If there is real conversation history, the planner returned empty tasks
+	// because the answer should already be present — answer from context.
+	// If there is NO history (first message in session), the planner made a
+	// mistake — route to the fallback agent which CAN call tools.
+	historyCount := 0
+	for _, m := range messages {
+		if m.Role == "user" || m.Role == "assistant" {
+			historyCount++
+		}
+	}
+
+	// No history = fresh question the planner wrongly skipped → use tool agent
+	if historyCount <= 1 {
+		return b.fallbackToDirect(userMessage, messages, callTool, start)
+	}
+
+	// Has history = follow-up question → answer from conversation context
+	contextMessages := make([]Message, 0, len(messages))
 	for _, m := range messages {
 		if m.Role == "system" && strings.Contains(m.Content, "You are an intelligent AI assistant") {
-			// Replace the generic system prompt with one focused on history-based answering
 			contextMessages = append(contextMessages, Message{
 				Role: "system",
-				Content: "You are a helpful AI assistant. Answer the user's question using the conversation history above. " +
+				Content: "You are a helpful AI assistant. Answer the user's follow-up question using the conversation history above. " +
 					"The history contains previous questions and answers — use that information to respond accurately. " +
 					"Do NOT say you need to search for information if it is already present in the conversation. " +
 					"Be concise and direct. Do not use <think> tags.",
@@ -250,11 +264,12 @@ func (b *Brain) handleNoTools(userMessage string, messages []Message, callTool f
 
 	choice, err := b.callGroq(contextMessages)
 	if err != nil {
-		return nil, err
+		// Even context answering failed — fall back to tool agent
+		return b.fallbackToDirect(userMessage, messages, callTool, start)
 	}
 	answer := stripThinkTags(choice.Content)
 	if strings.TrimSpace(answer) == "" {
-		answer = "I understand your question but I don't have the tools needed to answer it fully. Could you rephrase or ask something I can help with using my available tools?"
+		return b.fallbackToDirect(userMessage, messages, callTool, start)
 	}
 	return &OrchestratorResult{
 		Answer: answer,
