@@ -49,7 +49,7 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 				"   • Breaking news / current events / sports / politics → search_news\n" +
 				"   • Factual, historical, encyclopedic topics → wikipedia_summary\n" +
 				"   • Niche, real-time, or non-Wikipedia topics → web_search\n" +
-				"8. MAXIMUM 3 TASKS. If more are needed, pick the 3 most important.\n" +
+				"8. MAXIMUM 6 TASKS. If more are needed, pick the 6 most important.\n" +
 				"9. Do NOT create a task just to repeat information already in the conversation history.\n\n" +
 				"Available tools: get_weather, get_forecast, get_user, list_repos, get_repo, add_note, list_notes, " +
 				"search_notes, get_crypto_price, get_top_cryptos, get_top_news, search_news, " +
@@ -191,8 +191,8 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 		}
 		filtered = append(filtered, t)
 	}
-	if len(filtered) > 3 {
-		filtered = filtered[:3]
+	if len(filtered) > 6 {
+		filtered = filtered[:6]
 	}
 
 	log.Printf("[PLANNER] Tasks after filter: %d", len(filtered))
