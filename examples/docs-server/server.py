@@ -100,25 +100,46 @@ def resolve_document_name(requested_name):
     return None
 
 
-def chunk_text(text, chunk_size=300):
-    """Split text into chunks for better retrieval."""
-    lines = text.replace("\n\n", "\n").split("\n")
+def chunk_text(text, chunk_size=1200, overlap=150):
+    """Split text into overlapping chunks for better retrieval.
+
+    chunk_size=1200 chars (~200 tokens) gives enough context per chunk.
+    overlap=150 chars ensures sentences that span chunk boundaries are
+    still findable — the tail of one chunk repeats at the head of the next.
+    """
+    # Normalise whitespace but preserve paragraph breaks
+    text = re.sub(r"\n{3,}", "\n\n", text.strip())
+    lines = text.split("\n")
+
     chunks = []
     current = ""
 
     for line in lines:
         line = line.strip()
         if not line:
+            # Paragraph break — flush current chunk if it's big enough
+            if len(current) >= chunk_size // 2:
+                chunks.append(current.strip())
+                # Start next chunk with the overlap tail of the current one
+                current = current[-overlap:] if len(current) > overlap else current
             continue
-        if len(current) + len(line) > chunk_size and current:
+
+        if len(current) + len(line) + 1 > chunk_size and current:
             chunks.append(current.strip())
-            current = line
+            # Carry overlap into next chunk for context continuity
+            current = current[-overlap:] + "\n" + line if len(current) > overlap else line
         else:
             current += "\n" + line if current else line
 
     if current.strip():
         chunks.append(current.strip())
-    return chunks
+
+    # De-duplicate adjacent identical chunks (can happen with small docs)
+    deduped = []
+    for c in chunks:
+        if not deduped or deduped[-1] != c:
+            deduped.append(c)
+    return deduped
 
 
 def upload_doc(name, content):
@@ -343,4 +364,4 @@ if collection.count() == 0:
 if __name__ == "__main__":
     print(f"\nRAG Server ready on http://localhost:3008", flush=True)
     print(f"  Model: all-MiniLM-L6-v2 | Store: ChromaDB | Docs: {collection.count()} chunks\n", flush=True)
-    app.run(host="0.0.0.0", port=3008)
+    app.run(host="0.0.0.0", port=3008, threaded=True)
