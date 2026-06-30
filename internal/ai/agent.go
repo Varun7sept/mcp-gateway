@@ -155,7 +155,9 @@ func (b *Brain) RunAgentWithHistory(userMessage string, history []map[string]str
 		// Process each tool call in this step
 		for _, tc := range choice.ToolCalls {
 			var args map[string]any
-			json.Unmarshal([]byte(tc.Function.Arguments), &args)
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				return nil, fmt.Errorf("failed to parse tool arguments for %s: %w", tc.Function.Name, err)
+			}
 
 			// Call the actual tool via gateway
 			toolResult, err := callTool(tc.Function.Name, args)
@@ -216,6 +218,9 @@ func (b *Brain) callGroq(messages []Message) (*Message, error) {
 	chatResp, err := b.executeChat(reqBody)
 	if err != nil {
 		return nil, err
+	}
+	if len(chatResp.Choices) == 0 {
+		return nil, fmt.Errorf("callGroq: no choices in response")
 	}
 
 	return &chatResp.Choices[0].Message, nil

@@ -164,9 +164,7 @@ func resolveTemplates(args map[string]any, resolver func(int) string) {
 				}
 			}
 			if depResult != "" {
-				s = strings.ReplaceAll(s, "{Bitcoin price}", depResult)
-				s = strings.ReplaceAll(s, "{Ethereum price}", depResult)
-				// Generic fallback: replace any remaining {text} with dep result
+				// Generic fallback: replace any {text} placeholder with dep result
 				for strings.Contains(s, "{") && strings.Contains(s, "}") {
 					start := strings.Index(s, "{")
 					end := strings.Index(s, "}")
@@ -243,6 +241,9 @@ func (b *Brain) suggestAlternative(task *TaskDefinition, errMsg string) (*altern
 	chatResp, err := b.executeChat(reqBody)
 	if err != nil {
 		return nil, err
+	}
+	if len(chatResp.Choices) == 0 {
+		return nil, fmt.Errorf("suggestAlternative: no choices in response")
 	}
 
 	content := strings.TrimSpace(chatResp.Choices[0].Message.Content)

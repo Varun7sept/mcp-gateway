@@ -88,9 +88,13 @@ func New(port string) (*Server, error) {
 	}
 
 	var colCount int
-	database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='username'").Scan(&colCount)
+	if err := database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='username'").Scan(&colCount); err != nil {
+		return nil, fmt.Errorf("failed to check schema: %w", err)
+	}
 	if colCount == 0 {
-		database.Exec("ALTER TABLE notes ADD COLUMN username TEXT DEFAULT ''")
+		if _, err := database.Exec("ALTER TABLE notes ADD COLUMN username TEXT DEFAULT ''"); err != nil {
+			return nil, fmt.Errorf("failed to migrate schema: %w", err)
+		}
 		log.Println("Migrated notes database: added username column")
 	}
 
@@ -198,7 +202,10 @@ func (s *Server) handleToolCall(w http.ResponseWriter, req MCPRequest) {
 		for rows.Next() {
 			var id int
 			var title, content, tags, createdAt string
-			rows.Scan(&id, &title, &content, &tags, &createdAt)
+			if err := rows.Scan(&id, &title, &content, &tags, &createdAt); err != nil {
+				sendToolResult(w, req.ID, "Database scan error: "+err.Error(), true)
+				return
+			}
 			line := fmt.Sprintf("#%d [%s] %s", id, createdAt, title)
 			if tags != "" {
 				line += fmt.Sprintf(" (tags: %s)", tags)
@@ -241,7 +248,10 @@ func (s *Server) handleToolCall(w http.ResponseWriter, req MCPRequest) {
 		for rows.Next() {
 			var id int
 			var title, content, tags string
-			rows.Scan(&id, &title, &content, &tags)
+			if err := rows.Scan(&id, &title, &content, &tags); err != nil {
+				sendToolResult(w, req.ID, "Database scan error: "+err.Error(), true)
+				return
+			}
 			lines = append(lines, fmt.Sprintf("#%d: %s — %s", id, title, content))
 		}
 		if len(lines) == 0 {

@@ -56,7 +56,8 @@ func fetchCrypto(coin string) (string, error) {
 	resp, err := cryptoClient.Get(fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd,inr&include_24hr_change=true&include_market_cap=true", strings.ToLower(coin)))
 	if err != nil { return "", err }
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil { return "", fmt.Errorf("read error: %w", err) }
 	var data map[string]map[string]float64
 	if err := json.Unmarshal(body, &data); err != nil { return "", fmt.Errorf("parse error") }
 	d, ok := data[strings.ToLower(coin)]
@@ -70,7 +71,8 @@ func fetchTop() (string, error) {
 	resp, err := cryptoClient.Get("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1")
 	if err != nil { return "", err }
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil { return "", fmt.Errorf("read error: %w", err) }
 	var coins []struct { Name string `json:"name"`; Symbol string `json:"symbol"`; Price float64 `json:"current_price"`; Change24h float64 `json:"price_change_percentage_24h"` }
 	if err := json.Unmarshal(body, &coins); err != nil { return "", fmt.Errorf("parse error") }
 	var lines []string

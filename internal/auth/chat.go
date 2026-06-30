@@ -123,8 +123,10 @@ func (cs *ChatStore) DeleteSession(id, username string) error {
 
 	ctx2, cancel2 := dbCtx()
 	defer cancel2()
-	_, err = cs.messages.DeleteMany(ctx2, bson.M{"session_id": oid})
-	return err
+	if _, err = cs.messages.DeleteMany(ctx2, bson.M{"session_id": oid}); err != nil {
+		log.Printf("WARNING: session %s deleted but failed to delete its messages: %v (manual cleanup may be needed)", id, err)
+	}
+	return nil
 }
 
 func (cs *ChatStore) UpdateSessionTitle(sessionID, username, title string) error {

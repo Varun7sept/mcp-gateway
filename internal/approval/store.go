@@ -157,7 +157,8 @@ func (s *Store) WaitForApproval(id, username string, pollInterval time.Duration)
 
 		switch status {
 		case StatusApproved:
-			return req, nil
+			copy := *req
+			return &copy, nil
 		case StatusRejected:
 			return nil, fmt.Errorf("action rejected by user")
 		case StatusTimedOut:

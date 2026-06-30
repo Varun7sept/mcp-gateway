@@ -70,7 +70,8 @@ func fetchWeather(city string) (string, error) {
 	resp, err := weatherClient.Get(fmt.Sprintf("https://wttr.in/%s?format=j1", url.QueryEscape(city)))
 	if err != nil { return "", err }
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil { return "", fmt.Errorf("read error: %w", err) }
 	var data wttrResponse
 	if err := json.Unmarshal(body, &data); err != nil { return "", fmt.Errorf("parse error") }
 	if len(data.CurrentCondition) == 0 { return "", fmt.Errorf("no data for '%s'", city) }
@@ -84,7 +85,8 @@ func fetchForecast(city string) (string, error) {
 	resp, err := weatherClient.Get(fmt.Sprintf("https://wttr.in/%s?format=j1", url.QueryEscape(city)))
 	if err != nil { return "", err }
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil { return "", fmt.Errorf("read error: %w", err) }
 	var data wttrResponse
 	if err := json.Unmarshal(body, &data); err != nil { return "", fmt.Errorf("parse error") }
 	if len(data.Weather) == 0 { return "", fmt.Errorf("no forecast for '%s'", city) }
