@@ -74,7 +74,7 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 			Role: "system",
 			Content: "You are a task planning AI. Your job is to decompose the user's goal into the minimum number of tool calls needed.\n\n" +
 				"PLANNING RULES:\n" +
-				"1. Return an EMPTY tasks array [] for: greetings, simple math, follow-up questions answerable from prior context, or any question that needs no tool.\n" +
+				"1. Return an EMPTY tasks array [] for: greetings, simple math, or any question whose answer is ALREADY present in the conversation history above. If a previous assistant message already contains the information being asked about, return [] — do NOT call a tool again.\n" +
 				"2. Independent tasks (no shared data) CAN run in parallel — leave depends_on empty [].\n" +
 				"3. Tasks that need a prior task's output MUST set depends_on and reference the result with ${result:N} (N = task ID). Never use other placeholder formats.\n" +
 				"4. Each task calls EXACTLY ONE tool.\n" +
