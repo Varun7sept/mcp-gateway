@@ -229,7 +229,26 @@ func (b *Brain) fallbackToDirect(userMessage string, messages []Message, callToo
 }
 
 func (b *Brain) handleNoTools(userMessage string, messages []Message, callTool func(name string, args map[string]any) (string, error), start time.Time) (*OrchestratorResult, error) {
-	choice, err := b.callGroq(messages)
+	// Inject an explicit instruction to answer from conversation history.
+	// This is the path taken for follow-up questions — the planner returned
+	// no tasks because the answer should already be in the prior context.
+	contextMessages := make([]Message, 0, len(messages)+1)
+	for _, m := range messages {
+		if m.Role == "system" && strings.Contains(m.Content, "You are an intelligent AI assistant") {
+			// Replace the generic system prompt with one focused on history-based answering
+			contextMessages = append(contextMessages, Message{
+				Role: "system",
+				Content: "You are a helpful AI assistant. Answer the user's question using the conversation history above. " +
+					"The history contains previous questions and answers — use that information to respond accurately. " +
+					"Do NOT say you need to search for information if it is already present in the conversation. " +
+					"Be concise and direct. Do not use <think> tags.",
+			})
+		} else {
+			contextMessages = append(contextMessages, m)
+		}
+	}
+
+	choice, err := b.callGroq(contextMessages)
 	if err != nil {
 		return nil, err
 	}
@@ -262,12 +281,13 @@ func (b *Brain) compileResults(plan *Plan, report *ExecutionReport, userMessage 
 		steps = append(steps, step)
 	}
 
-	var finalAnswer string
+	// Build clean raw data string (used as fallback only — never shown directly if synthesis succeeds)
+	var rawData string
 	if len(failedTasks) > 0 {
-		finalAnswer = fmt.Sprintf("Completed %d tasks. The following tasks failed: %s.\n\nResults from successful tasks:\n%s",
+		rawData = fmt.Sprintf("Completed %d tasks. Failed: %s.\n\nSuccessful results:\n%s",
 			len(plan.Tasks), strings.Join(failedTasks, "; "), strings.Join(results, "\n\n"))
 	} else {
-		finalAnswer = strings.Join(results, "\n\n")
+		rawData = strings.Join(results, "\n\n")
 	}
 
 	summaryMessages := []Message{
@@ -283,12 +303,36 @@ func (b *Brain) compileResults(plan *Plan, report *ExecutionReport, userMessage 
 				"6. Be concise but complete. Aim for 2–6 sentences or a short bulleted list.\n" +
 				"7. Do not include <think> tags or meta-commentary about what tools were used.",
 		},
-		{Role: "user", Content: fmt.Sprintf("User asked: %s\n\nTool results:\n%s\n\nNow write a helpful answer:", userMessage, finalAnswer)},
+		{Role: "user", Content: fmt.Sprintf("User asked: %s\n\nTool results:\n%s\n\nNow write a helpful answer:", userMessage, rawData)},
 	}
 
-	summaryResp, err := b.callGroq(summaryMessages)
-	if err == nil && summaryResp.Content != "" {
-		finalAnswer = stripThinkTags(summaryResp.Content)
+	// Try synthesis — retry once on failure (e.g. transient rate limit)
+	var finalAnswer string
+	for attempt := 0; attempt < 2; attempt++ {
+		summaryResp, err := b.callGroq(summaryMessages)
+		if err == nil && strings.TrimSpace(summaryResp.Content) != "" {
+			finalAnswer = stripThinkTags(summaryResp.Content)
+			break
+		}
+	}
+
+	// If synthesis failed both times, build a clean readable fallback
+	// instead of dumping raw "Tool X result: ..." text at the user.
+	if finalAnswer == "" {
+		if len(results) > 0 {
+			// Strip the "Tool 'X' result: " prefix from each result
+			var cleaned []string
+			for _, r := range results {
+				if idx := strings.Index(r, " result: "); idx != -1 {
+					cleaned = append(cleaned, strings.TrimSpace(r[idx+9:]))
+				} else {
+					cleaned = append(cleaned, r)
+				}
+			}
+			finalAnswer = strings.Join(cleaned, "\n\n")
+		} else {
+			finalAnswer = "I wasn't able to get a response right now. Please try again."
+		}
 	}
 
 	return finalAnswer, steps
