@@ -19,9 +19,9 @@ var (
 )
 
 var urlTools = []map[string]any{
-	{"name": "shorten_url", "description": "Shorten a long URL", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string", "description": "The URL to shorten"}}, "required": []string{"url"}}},
-	{"name": "generate_qr", "description": "Generate a QR code for any text or link", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string", "description": "Text or URL to encode"}, "size": map[string]any{"type": "string", "description": "small, medium, large"}}, "required": []string{"text"}}},
-	{"name": "expand_url", "description": "Expand a shortened URL", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string", "description": "The short URL to expand"}}, "required": []string{"url"}}},
+	{"name": "shorten_url", "description": "Shorten a long URL into a compact short link using TinyURL", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string", "description": "The full URL to shorten (must start with http:// or https://)"}}, "required": []string{"url"}}},
+	{"name": "generate_qr", "description": "Generate a QR code image for any text, URL, or data. Returns an image URL.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string", "description": "Text or URL to encode into the QR code"}, "size": map[string]any{"type": "string", "description": "small, medium, large"}}, "required": []string{"text"}}},
+	{"name": "expand_url", "description": "Resolve a shortened URL (e.g. bit.ly, tinyurl.com) to see the full destination URL", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string", "description": "The shortened URL to expand (must start with http:// or https://)"}}, "required": []string{"url"}}},
 }
 
 func StartURLTools(port string) error {

@@ -16,8 +16,8 @@ type RSS struct { Channel struct { Items []RSSItem `xml:"item"` } `xml:"channel"
 type RSSItem struct { Title string `xml:"title"`; Link string `xml:"link"`; PubDate string `xml:"pubDate"`; Source string `xml:"source"` }
 
 var newsTools = []map[string]any{
-	{"name": "get_top_news", "description": "Get today's top news headlines", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"topic": map[string]any{"type": "string", "description": "Topic: general, technology, business, sports, science, health"}}}},
-	{"name": "search_news", "description": "Search for news articles about any topic", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string", "description": "Search keyword"}}, "required": []string{"query"}}},
+	{"name": "get_top_news", "description": "Get today's top news headlines for a given topic. Use for general browsing. For specific events or people in the news use search_news instead.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"topic": map[string]any{"type": "string", "description": "Topic category — one of: general, technology, business, sports, science, health (default: general)"}}}},
+	{"name": "search_news", "description": "Search news articles by keyword. Best for current events, breaking news, sports scores, people in the news, or politics.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string", "description": "Search keyword or phrase e.g. Messi World Cup or OpenAI GPT"}}, "required": []string{"query"}}},
 }
 
 func StartNews(port string) error {

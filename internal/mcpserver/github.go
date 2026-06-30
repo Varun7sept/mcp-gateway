@@ -17,9 +17,9 @@ var githubHTTPClient = &http.Client{Timeout: 10 * time.Second}
 var githubToken = os.Getenv("GITHUB_TOKEN")
 
 var githubTools = []map[string]any{
-	{"name": "get_user", "description": "Get a real GitHub user's profile", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"username": map[string]any{"type": "string", "description": "GitHub username"}}, "required": []string{"username"}}},
-	{"name": "list_repos", "description": "List real public repositories for a GitHub user", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"username": map[string]any{"type": "string", "description": "GitHub username"}, "sort": map[string]any{"type": "string", "description": "Sort: stars, updated, name"}}, "required": []string{"username"}}},
-	{"name": "get_repo", "description": "Get details about a specific GitHub repository", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"owner": map[string]any{"type": "string", "description": "Repository owner"}, "repo": map[string]any{"type": "string", "description": "Repository name"}}, "required": []string{"owner", "repo"}}},
+	{"name": "get_user", "description": "Get a GitHub user's public profile: bio, follower/following count, public repo count, and account creation date", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"username": map[string]any{"type": "string", "description": "GitHub username, e.g. torvalds or google"}}, "required": []string{"username"}}},
+	{"name": "list_repos", "description": "List public repositories for a GitHub user, sorted by stars. Returns name, description, language, and star count.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"username": map[string]any{"type": "string", "description": "GitHub username, e.g. torvalds or google"}, "sort": map[string]any{"type": "string", "description": "Sort order: stars (default), updated, or name"}}, "required": []string{"username"}}},
+	{"name": "get_repo", "description": "Get details about a GitHub repository: description, stars, forks, open issues, language, and license", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"owner": map[string]any{"type": "string", "description": "GitHub username or organization that owns the repository"}, "repo": map[string]any{"type": "string", "description": "Repository name, e.g. linux or react"}}, "required": []string{"owner", "repo"}}},
 }
 
 func StartGitHub(port string) error {

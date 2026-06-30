@@ -12,8 +12,8 @@ import (
 )
 
 var searchTools = []map[string]any{
-	{"name": "web_search", "description": "Search the internet for information", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string", "description": "Search query"}}, "required": []string{"query"}}},
-	{"name": "wikipedia_summary", "description": "Get a Wikipedia summary about any topic", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"topic": map[string]any{"type": "string", "description": "Topic to look up"}}, "required": []string{"topic"}}},
+	{"name": "web_search", "description": "Search the internet for real-time or niche information. Use for current stats, prices, recent events, or topics not well covered by Wikipedia.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string", "description": "Search query e.g. population of Japan 2024 or latest iPhone price India"}}, "required": []string{"query"}}},
+	{"name": "wikipedia_summary", "description": "Get a structured Wikipedia summary for any well-known person, place, historical event, or concept. Prefer this over web_search for encyclopedic topics.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"topic": map[string]any{"type": "string", "description": "Topic name e.g. Lionel Messi or Black Hole or French Revolution"}}, "required": []string{"topic"}}},
 }
 
 func StartSearch(port string) error {

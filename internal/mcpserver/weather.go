@@ -13,8 +13,8 @@ import (
 var weatherClient = &http.Client{Timeout: 10 * time.Second}
 
 var weatherTools = []map[string]any{
-	{"name": "get_weather", "description": "Get the REAL current weather for any city", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string", "description": "City name"}}, "required": []string{"city"}}},
-	{"name": "get_forecast", "description": "Get a real 3-day weather forecast for any city", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string", "description": "City name"}}, "required": []string{"city"}}},
+	{"name": "get_weather", "description": "Get the current real-time weather for any city worldwide — temperature, humidity, wind speed, and conditions", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string", "description": "City name, e.g. London, Mumbai, New York"}}, "required": []string{"city"}}},
+	{"name": "get_forecast", "description": "Get a 3-day weather forecast for any city — daily high/low, conditions, and precipitation", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string", "description": "City name, e.g. London, Mumbai, New York"}}, "required": []string{"city"}}},
 }
 
 type wttrResponse struct {

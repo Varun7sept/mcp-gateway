@@ -199,61 +199,61 @@ type ToolCallResult struct {
 // GetAvailableTools returns tool definitions formatted for Groq's API.
 func GetAvailableTools() []ToolDef {
 	return []ToolDef{
-		makeTool("get_weather", "Get the current real weather for any city in the world", map[string]any{
-			"city": map[string]any{"type": "string", "description": "The city name (e.g., London, Mumbai, New York)"},
+		makeTool("get_weather", "Get real-time weather for any city: temperature, humidity, wind speed, and conditions", map[string]any{
+			"city": map[string]any{"type": "string", "description": "City name, e.g. London, Mumbai, New York"},
 		}, []string{"city"}),
-		makeTool("get_forecast", "Get a real 3-day weather forecast for any city", map[string]any{
-			"city": map[string]any{"type": "string", "description": "The city name"},
+		makeTool("get_forecast", "Get a 3-day weather forecast for any city — daily high/low, conditions, and precipitation", map[string]any{
+			"city": map[string]any{"type": "string", "description": "City name, e.g. Tokyo, Sydney"},
 		}, []string{"city"}),
-		makeTool("get_user", "Get a real GitHub user profile including followers repos and bio", map[string]any{
-			"username": map[string]any{"type": "string", "description": "GitHub username such as torvalds or google"},
+		makeTool("get_user", "Get a GitHub user's public profile: bio, followers, following count, and public repos", map[string]any{
+			"username": map[string]any{"type": "string", "description": "GitHub username, e.g. torvalds or google"},
 		}, []string{"username"}),
-		makeTool("list_repos", "List real public repositories for a GitHub user sorted by stars", map[string]any{
+		makeTool("list_repos", "List public repositories for a GitHub user sorted by stars — includes name, description, language, star count", map[string]any{
 			"username": map[string]any{"type": "string", "description": "GitHub username"},
 		}, []string{"username"}),
-		makeTool("get_repo", "Get details about a specific GitHub repository including stars forks and description", map[string]any{
-			"owner": map[string]any{"type": "string", "description": "Repository owner username"},
-			"repo":  map[string]any{"type": "string", "description": "Repository name"},
+		makeTool("get_repo", "Get details about a GitHub repository: description, stars, forks, open issues, language, and license", map[string]any{
+			"owner": map[string]any{"type": "string", "description": "Repository owner username or org"},
+			"repo":  map[string]any{"type": "string", "description": "Repository name, e.g. linux or react"},
 		}, []string{"owner", "repo"}),
-		makeTool("add_note", "Save a note permanently in the database", map[string]any{
-			"title":   map[string]any{"type": "string", "description": "Note title"},
-			"content": map[string]any{"type": "string", "description": "Note body text"},
+		makeTool("add_note", "Save a new note permanently in the database with a title and content", map[string]any{
+			"title":   map[string]any{"type": "string", "description": "Short title for the note"},
+			"content": map[string]any{"type": "string", "description": "Full text content of the note"},
 		}, []string{"title", "content"}),
-		makeTool("list_notes", "List all saved notes from the database", map[string]any{}, nil),
-		makeTool("search_notes", "Search notes by keyword in title or content", map[string]any{
-			"query": map[string]any{"type": "string", "description": "Search keyword"},
+		makeTool("list_notes", "List all notes saved in the database, ordered by most recent", map[string]any{}, nil),
+		makeTool("search_notes", "Search saved notes by keyword — matches against both title and content", map[string]any{
+			"query": map[string]any{"type": "string", "description": "Keyword or phrase to search for"},
 		}, []string{"query"}),
-		makeTool("get_crypto_price", "Get real-time price of any cryptocurrency like Bitcoin Ethereum Solana Dogecoin", map[string]any{
-			"coin": map[string]any{"type": "string", "description": "Coin ID such as bitcoin, ethereum, solana, dogecoin, cardano"},
+		makeTool("get_crypto_price", "Get the live price, 24h change, and market cap for any cryptocurrency. Use coin IDs like bitcoin, ethereum, solana.", map[string]any{
+			"coin": map[string]any{"type": "string", "description": "Coin ID in lowercase: bitcoin, ethereum, solana, dogecoin, cardano, xrp"},
 		}, []string{"coin"}),
-		makeTool("get_top_cryptos", "Get top 10 cryptocurrencies by market cap with current prices", map[string]any{}, nil),
-		makeTool("get_top_news", "Get today top news headlines", map[string]any{
-			"topic": map[string]any{"type": "string", "description": "Topic: general, technology, business, sports, science, health"},
+		makeTool("get_top_cryptos", "Get the top 10 cryptocurrencies by market cap with live prices and 24h % change", map[string]any{}, nil),
+		makeTool("get_top_news", "Get today's top news headlines by topic. For specific events, people, or breaking news use search_news instead.", map[string]any{
+			"topic": map[string]any{"type": "string", "description": "One of: general, technology, business, sports, science, health"},
 		}, nil),
-		makeTool("search_news", "Search for news articles about any topic or keyword", map[string]any{
-			"query": map[string]any{"type": "string", "description": "Search keyword like AI or SpaceX or climate"},
+		makeTool("search_news", "Search news articles by keyword. Best for current events, breaking news, sports scores, and people in the news.", map[string]any{
+			"query": map[string]any{"type": "string", "description": "Search keyword or phrase, e.g. 'Messi World Cup' or 'OpenAI GPT'"},
 		}, []string{"query"}),
-		makeTool("shorten_url", "Shorten a long URL into a short link", map[string]any{
-			"url": map[string]any{"type": "string", "description": "The long URL to shorten"},
+		makeTool("shorten_url", "Shorten a long URL into a compact short link using TinyURL", map[string]any{
+			"url": map[string]any{"type": "string", "description": "Full URL to shorten (must start with http:// or https://)"},
 		}, []string{"url"}),
-		makeTool("generate_qr", "Generate a QR code image URL for any text or link", map[string]any{
-			"text": map[string]any{"type": "string", "description": "Text or URL to encode in QR code"},
+		makeTool("generate_qr", "Generate a QR code image for any text, URL, or data. Returns an image URL.", map[string]any{
+			"text": map[string]any{"type": "string", "description": "Text or URL to encode into the QR code"},
 		}, []string{"text"}),
-		makeTool("web_search", "Search the internet for factual information statistics current events or any question you cannot answer from memory", map[string]any{
-			"query": map[string]any{"type": "string", "description": "Search query like Messi World Cup goals or population of Japan"},
+		makeTool("web_search", "Search the internet for real-time or niche info: current stats, recent events, prices, or topics not well covered by Wikipedia.", map[string]any{
+			"query": map[string]any{"type": "string", "description": "Search query, e.g. 'population of Japan 2024' or 'latest iPhone price India'"},
 		}, []string{"query"}),
-		makeTool("wikipedia_summary", "Get a Wikipedia summary about any topic person place event or thing", map[string]any{
-			"topic": map[string]any{"type": "string", "description": "Topic name like Lionel Messi or Bitcoin or Mars"},
+		makeTool("wikipedia_summary", "Get a structured Wikipedia summary for any well-known person, place, event, or concept. Prefer over web_search for encyclopedic topics.", map[string]any{
+			"topic": map[string]any{"type": "string", "description": "Topic name, e.g. 'Lionel Messi' or 'Black Hole' or 'French Revolution'"},
 		}, []string{"topic"}),
-		makeTool("upload_document", "Upload a document to the knowledge base for later Q and A", map[string]any{
-			"name":    map[string]any{"type": "string", "description": "Document name"},
+		makeTool("upload_document", "Upload a document to the knowledge base so it can be queried later with ask_document", map[string]any{
+			"name":    map[string]any{"type": "string", "description": "Document name or filename"},
 			"content": map[string]any{"type": "string", "description": "Full text content of the document"},
 		}, []string{"name", "content"}),
-		makeTool("ask_document", "Ask a question about uploaded documents and get relevant passages. If the user mentions a specific document name, pass it as document_name to search only that document.", map[string]any{
-			"question":      map[string]any{"type": "string", "description": "Question about the documents"},
-			"document_name": map[string]any{"type": "string", "description": "Optional: search only within this specific document (e.g., '176_ngo_reg_cert'). Extract this from the user's message if they mention a document name or number."},
+		makeTool("ask_document", "Ask a question about uploaded documents and get relevant passages. Pass document_name to search a specific document.", map[string]any{
+			"question":      map[string]any{"type": "string", "description": "Question to answer from the documents"},
+			"document_name": map[string]any{"type": "string", "description": "Optional: name of a specific document to search within"},
 		}, []string{"question"}),
-		makeTool("list_documents", "List all uploaded documents in the knowledge base", map[string]any{}, nil),
+		makeTool("list_documents", "List all documents currently in the knowledge base", map[string]any{}, nil),
 	}
 }
 

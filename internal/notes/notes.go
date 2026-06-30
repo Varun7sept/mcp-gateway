@@ -28,34 +28,34 @@ type MCPResponse struct {
 var tools = []map[string]any{
 	{
 		"name":        "add_note",
-		"description": "Create a new note (permanently saved in database)",
+		"description": "Save a new note to the database with a title, content, and optional tags. Notes are permanently stored and searchable.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"title":   map[string]any{"type": "string", "description": "Note title"},
-				"content": map[string]any{"type": "string", "description": "Note body/content"},
-				"tags":    map[string]any{"type": "string", "description": "Comma-separated tags (optional, e.g., 'work,important')"},
+				"title":   map[string]any{"type": "string", "description": "Short title for the note e.g. Meeting notes or Shopping list"},
+				"content": map[string]any{"type": "string", "description": "Full text content of the note"},
+				"tags":    map[string]any{"type": "string", "description": "Optional tags separated by commas e.g. work or important or todo"},
 			},
 			"required": []string{"title", "content"},
 		},
 	},
 	{
 		"name":        "list_notes",
-		"description": "List all saved notes from the database",
+		"description": "List all notes saved in the database, ordered by most recent. Returns title, content preview, tags, and creation date.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"limit": map[string]any{"type": "number", "description": "Maximum notes to return (default: 20)"},
+				"limit": map[string]any{"type": "number", "description": "Maximum number of notes to return (1–100, default: 20)"},
 			},
 		},
 	},
 	{
 		"name":        "search_notes",
-		"description": "Search notes by keyword in title or content",
+		"description": "Search saved notes by keyword. Matches against both title and content. Returns matching notes with highlights.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"query": map[string]any{"type": "string", "description": "Search keyword"},
+				"query": map[string]any{"type": "string", "description": "Keyword or phrase to search for in note titles and content"},
 			},
 			"required": []string{"query"},
 		},
