@@ -28,34 +28,34 @@ type MCPResponse struct {
 var tools = []map[string]any{
 	{
 		"name":        "add_note",
-		"description": "Create a new note (permanently saved in database)",
+		"description": "Save a new note to the database with a title, content, and optional tags. Notes are permanently stored and searchable.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"title":   map[string]any{"type": "string", "description": "Note title"},
-				"content": map[string]any{"type": "string", "description": "Note body/content"},
-				"tags":    map[string]any{"type": "string", "description": "Comma-separated tags (optional, e.g., 'work,important')"},
+				"title":   map[string]any{"type": "string", "description": "Short title for the note e.g. Meeting notes or Shopping list"},
+				"content": map[string]any{"type": "string", "description": "Full text content of the note"},
+				"tags":    map[string]any{"type": "string", "description": "Optional tags separated by commas e.g. work or important or todo"},
 			},
 			"required": []string{"title", "content"},
 		},
 	},
 	{
 		"name":        "list_notes",
-		"description": "List all saved notes from the database",
+		"description": "List all notes saved in the database, ordered by most recent. Returns title, content preview, tags, and creation date.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"limit": map[string]any{"type": "number", "description": "Maximum notes to return (default: 20)"},
+				"limit": map[string]any{"type": "number", "description": "Maximum number of notes to return (1–100, default: 20)"},
 			},
 		},
 	},
 	{
 		"name":        "search_notes",
-		"description": "Search notes by keyword in title or content",
+		"description": "Search saved notes by keyword. Matches against both title and content. Returns matching notes with highlights.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"query": map[string]any{"type": "string", "description": "Search keyword"},
+				"query": map[string]any{"type": "string", "description": "Keyword or phrase to search for in note titles and content"},
 			},
 			"required": []string{"query"},
 		},
@@ -88,9 +88,13 @@ func New(port string) (*Server, error) {
 	}
 
 	var colCount int
-	database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='username'").Scan(&colCount)
+	if err := database.QueryRow("SELECT COUNT(*) FROM pragma_table_info('notes') WHERE name='username'").Scan(&colCount); err != nil {
+		return nil, fmt.Errorf("failed to check schema: %w", err)
+	}
 	if colCount == 0 {
-		database.Exec("ALTER TABLE notes ADD COLUMN username TEXT DEFAULT ''")
+		if _, err := database.Exec("ALTER TABLE notes ADD COLUMN username TEXT DEFAULT ''"); err != nil {
+			return nil, fmt.Errorf("failed to migrate schema: %w", err)
+		}
 		log.Println("Migrated notes database: added username column")
 	}
 
@@ -198,7 +202,10 @@ func (s *Server) handleToolCall(w http.ResponseWriter, req MCPRequest) {
 		for rows.Next() {
 			var id int
 			var title, content, tags, createdAt string
-			rows.Scan(&id, &title, &content, &tags, &createdAt)
+			if err := rows.Scan(&id, &title, &content, &tags, &createdAt); err != nil {
+				sendToolResult(w, req.ID, "Database scan error: "+err.Error(), true)
+				return
+			}
 			line := fmt.Sprintf("#%d [%s] %s", id, createdAt, title)
 			if tags != "" {
 				line += fmt.Sprintf(" (tags: %s)", tags)
@@ -241,7 +248,10 @@ func (s *Server) handleToolCall(w http.ResponseWriter, req MCPRequest) {
 		for rows.Next() {
 			var id int
 			var title, content, tags string
-			rows.Scan(&id, &title, &content, &tags)
+			if err := rows.Scan(&id, &title, &content, &tags); err != nil {
+				sendToolResult(w, req.ID, "Database scan error: "+err.Error(), true)
+				return
+			}
 			lines = append(lines, fmt.Sprintf("#%d: %s — %s", id, title, content))
 		}
 		if len(lines) == 0 {

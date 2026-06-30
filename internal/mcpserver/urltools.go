@@ -8,20 +8,15 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 )
 
-var (
-	shortURLs = make(map[string]string)
-	urlMu     sync.Mutex
-	nextShort = 1000
-)
+var urlToolsClient = &http.Client{Timeout: 10 * time.Second}
 
 var urlTools = []map[string]any{
-	{"name": "shorten_url", "description": "Shorten a long URL", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string", "description": "The URL to shorten"}}, "required": []string{"url"}}},
-	{"name": "generate_qr", "description": "Generate a QR code for any text or link", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string", "description": "Text or URL to encode"}, "size": map[string]any{"type": "string", "description": "small, medium, large"}}, "required": []string{"text"}}},
-	{"name": "expand_url", "description": "Expand a shortened URL", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string", "description": "The short URL to expand"}}, "required": []string{"url"}}},
+	{"name": "shorten_url", "description": "Shorten a long URL into a compact short link using TinyURL", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string", "description": "The full URL to shorten (must start with http:// or https://)"}}, "required": []string{"url"}}},
+	{"name": "generate_qr", "description": "Generate a QR code image for any text, URL, or data. Returns an image URL.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"text": map[string]any{"type": "string", "description": "Text or URL to encode into the QR code"}, "size": map[string]any{"type": "string", "description": "small, medium, large"}}, "required": []string{"text"}}},
+	{"name": "expand_url", "description": "Resolve a shortened URL (e.g. bit.ly, tinyurl.com) to see the full destination URL", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string", "description": "The shortened URL to expand (must start with http:// or https://)"}}, "required": []string{"url"}}},
 }
 
 func StartURLTools(port string) error {
@@ -48,13 +43,13 @@ func handleURLTool(w http.ResponseWriter, req MCPRequest) {
 	case "shorten_url":
 		u, _ := args["url"].(string)
 		if u == "" { sendToolResult(w, req.ID, "Error: url required", true); return }
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Get(fmt.Sprintf("https://is.gd/create.php?format=simple&url=%s", url.QueryEscape(u)))
-		if err != nil { sendToolResult(w, req.ID, localShorten(u), false); return }
+		resp, err := urlToolsClient.Get(fmt.Sprintf("https://is.gd/create.php?format=simple&url=%s", url.QueryEscape(u)))
+		if err != nil { sendToolResult(w, req.ID, "Error: URL shortener unavailable: "+err.Error(), true); return }
 		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil { sendToolResult(w, req.ID, "Error: failed to read response: "+err.Error(), true); return }
 		s := strings.TrimSpace(string(body))
-		if strings.HasPrefix(s, "http") { sendToolResult(w, req.ID, fmt.Sprintf("Shortened: %s → %s", u, s), false) } else { sendToolResult(w, req.ID, localShorten(u), false) }
+		if strings.HasPrefix(s, "http") { sendToolResult(w, req.ID, fmt.Sprintf("Shortened: %s → %s", u, s), false) } else { sendToolResult(w, req.ID, "Error: URL shortener returned unexpected response", true) }
 	case "generate_qr":
 		text, _ := args["text"].(string); size, _ := args["size"].(string)
 		if text == "" { sendToolResult(w, req.ID, "Error: text required", true); return }
@@ -69,8 +64,8 @@ func handleURLTool(w http.ResponseWriter, req MCPRequest) {
 			sendToolResult(w, req.ID, "Error: only http:// and https:// URLs are supported", true)
 			return
 		}
-		client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
-		resp, err := client.Head(u)
+		expandClient := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+		resp, err := expandClient.Head(u)
 		if err != nil { sendToolResult(w, req.ID, fmt.Sprintf("Error expanding: %v", err), true); return }
 		defer resp.Body.Close()
 		if loc := resp.Header.Get("Location"); loc != "" { sendToolResult(w, req.ID, fmt.Sprintf("Short: %s\n  Full: %s", u, loc), false) } else { sendToolResult(w, req.ID, fmt.Sprintf("No redirect: %s", u), false) }
@@ -78,11 +73,3 @@ func handleURLTool(w http.ResponseWriter, req MCPRequest) {
 	}
 }
 
-func localShorten(longURL string) string {
-	urlMu.Lock()
-	code := fmt.Sprintf("mcp%d", nextShort)
-	nextShort++
-	shortURLs[code] = longURL
-	urlMu.Unlock()
-	return fmt.Sprintf("Shortened (local): %s → http://localhost:3006/s/%s", longURL, code)
-}

@@ -13,8 +13,8 @@ import (
 var cryptoClient = &http.Client{Timeout: 10 * time.Second}
 
 var cryptoTools = []map[string]any{
-	{"name": "get_crypto_price", "description": "Get real-time price of any cryptocurrency", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"coin": map[string]any{"type": "string", "description": "Coin name (e.g., bitcoin, ethereum, solana)"}}, "required": []string{"coin"}}},
-	{"name": "get_top_cryptos", "description": "Get top 10 cryptocurrencies by market cap", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{}}},
+	{"name": "get_crypto_price", "description": "Get the live price, 24h change, and market cap for any cryptocurrency (Bitcoin, Ethereum, Solana, etc.)", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"coin": map[string]any{"type": "string", "description": "Coin ID in lowercase, e.g. bitcoin, ethereum, solana, dogecoin, cardano"}}, "required": []string{"coin"}}},
+	{"name": "get_top_cryptos", "description": "Get the top 10 cryptocurrencies ranked by market cap with live prices and 24h % change", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{}}},
 }
 
 func StartCrypto(port string) error {
@@ -56,7 +56,8 @@ func fetchCrypto(coin string) (string, error) {
 	resp, err := cryptoClient.Get(fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd,inr&include_24hr_change=true&include_market_cap=true", strings.ToLower(coin)))
 	if err != nil { return "", err }
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil { return "", fmt.Errorf("read error: %w", err) }
 	var data map[string]map[string]float64
 	if err := json.Unmarshal(body, &data); err != nil { return "", fmt.Errorf("parse error") }
 	d, ok := data[strings.ToLower(coin)]
@@ -70,7 +71,8 @@ func fetchTop() (string, error) {
 	resp, err := cryptoClient.Get("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1")
 	if err != nil { return "", err }
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil { return "", fmt.Errorf("read error: %w", err) }
 	var coins []struct { Name string `json:"name"`; Symbol string `json:"symbol"`; Price float64 `json:"current_price"`; Change24h float64 `json:"price_change_percentage_24h"` }
 	if err := json.Unmarshal(body, &coins); err != nil { return "", fmt.Errorf("parse error") }
 	var lines []string

@@ -199,61 +199,61 @@ type ToolCallResult struct {
 // GetAvailableTools returns tool definitions formatted for Groq's API.
 func GetAvailableTools() []ToolDef {
 	return []ToolDef{
-		makeTool("get_weather", "Get the current real weather for any city in the world", map[string]any{
-			"city": map[string]any{"type": "string", "description": "The city name (e.g., London, Mumbai, New York)"},
+		makeTool("get_weather", "Get real-time weather for any city: temperature, humidity, wind speed, and conditions", map[string]any{
+			"city": map[string]any{"type": "string", "description": "City name, e.g. London, Mumbai, New York"},
 		}, []string{"city"}),
-		makeTool("get_forecast", "Get a real 3-day weather forecast for any city", map[string]any{
-			"city": map[string]any{"type": "string", "description": "The city name"},
+		makeTool("get_forecast", "Get a 3-day weather forecast for any city — daily high/low, conditions, and precipitation", map[string]any{
+			"city": map[string]any{"type": "string", "description": "City name, e.g. Tokyo, Sydney"},
 		}, []string{"city"}),
-		makeTool("get_user", "Get a real GitHub user profile including followers repos and bio", map[string]any{
-			"username": map[string]any{"type": "string", "description": "GitHub username such as torvalds or google"},
+		makeTool("get_user", "Get a GitHub user's public profile: bio, followers, following count, and public repos", map[string]any{
+			"username": map[string]any{"type": "string", "description": "GitHub username, e.g. torvalds or google"},
 		}, []string{"username"}),
-		makeTool("list_repos", "List real public repositories for a GitHub user sorted by stars", map[string]any{
+		makeTool("list_repos", "List public repositories for a GitHub user sorted by stars — includes name, description, language, star count", map[string]any{
 			"username": map[string]any{"type": "string", "description": "GitHub username"},
 		}, []string{"username"}),
-		makeTool("get_repo", "Get details about a specific GitHub repository including stars forks and description", map[string]any{
-			"owner": map[string]any{"type": "string", "description": "Repository owner username"},
-			"repo":  map[string]any{"type": "string", "description": "Repository name"},
+		makeTool("get_repo", "Get details about a GitHub repository: description, stars, forks, open issues, language, and license", map[string]any{
+			"owner": map[string]any{"type": "string", "description": "Repository owner username or org"},
+			"repo":  map[string]any{"type": "string", "description": "Repository name, e.g. linux or react"},
 		}, []string{"owner", "repo"}),
-		makeTool("add_note", "Save a note permanently in the database", map[string]any{
-			"title":   map[string]any{"type": "string", "description": "Note title"},
-			"content": map[string]any{"type": "string", "description": "Note body text"},
+		makeTool("add_note", "Save a new note permanently in the database with a title and content", map[string]any{
+			"title":   map[string]any{"type": "string", "description": "Short title for the note"},
+			"content": map[string]any{"type": "string", "description": "Full text content of the note"},
 		}, []string{"title", "content"}),
-		makeTool("list_notes", "List all saved notes from the database", map[string]any{}, nil),
-		makeTool("search_notes", "Search notes by keyword in title or content", map[string]any{
-			"query": map[string]any{"type": "string", "description": "Search keyword"},
+		makeTool("list_notes", "List all notes saved in the database, ordered by most recent", map[string]any{}, nil),
+		makeTool("search_notes", "Search saved notes by keyword — matches against both title and content", map[string]any{
+			"query": map[string]any{"type": "string", "description": "Keyword or phrase to search for"},
 		}, []string{"query"}),
-		makeTool("get_crypto_price", "Get real-time price of any cryptocurrency like Bitcoin Ethereum Solana Dogecoin", map[string]any{
-			"coin": map[string]any{"type": "string", "description": "Coin ID such as bitcoin, ethereum, solana, dogecoin, cardano"},
+		makeTool("get_crypto_price", "Get the live price, 24h change, and market cap for any cryptocurrency. Use coin IDs like bitcoin, ethereum, solana.", map[string]any{
+			"coin": map[string]any{"type": "string", "description": "Coin ID in lowercase: bitcoin, ethereum, solana, dogecoin, cardano, xrp"},
 		}, []string{"coin"}),
-		makeTool("get_top_cryptos", "Get top 10 cryptocurrencies by market cap with current prices", map[string]any{}, nil),
-		makeTool("get_top_news", "Get today top news headlines", map[string]any{
-			"topic": map[string]any{"type": "string", "description": "Topic: general, technology, business, sports, science, health"},
+		makeTool("get_top_cryptos", "Get the top 10 cryptocurrencies by market cap with live prices and 24h % change", map[string]any{}, nil),
+		makeTool("get_top_news", "Get today's top news headlines by topic. For specific events, people, or breaking news use search_news instead.", map[string]any{
+			"topic": map[string]any{"type": "string", "description": "One of: general, technology, business, sports, science, health"},
 		}, nil),
-		makeTool("search_news", "Search for news articles about any topic or keyword", map[string]any{
-			"query": map[string]any{"type": "string", "description": "Search keyword like AI or SpaceX or climate"},
+		makeTool("search_news", "Search news articles by keyword. Best for current events, breaking news, sports scores, and people in the news.", map[string]any{
+			"query": map[string]any{"type": "string", "description": "Search keyword or phrase, e.g. 'Messi World Cup' or 'OpenAI GPT'"},
 		}, []string{"query"}),
-		makeTool("shorten_url", "Shorten a long URL into a short link", map[string]any{
-			"url": map[string]any{"type": "string", "description": "The long URL to shorten"},
+		makeTool("shorten_url", "Shorten a long URL into a compact short link using TinyURL", map[string]any{
+			"url": map[string]any{"type": "string", "description": "Full URL to shorten (must start with http:// or https://)"},
 		}, []string{"url"}),
-		makeTool("generate_qr", "Generate a QR code image URL for any text or link", map[string]any{
-			"text": map[string]any{"type": "string", "description": "Text or URL to encode in QR code"},
+		makeTool("generate_qr", "Generate a QR code image for any text, URL, or data. Returns an image URL.", map[string]any{
+			"text": map[string]any{"type": "string", "description": "Text or URL to encode into the QR code"},
 		}, []string{"text"}),
-		makeTool("web_search", "Search the internet for factual information statistics current events or any question you cannot answer from memory", map[string]any{
-			"query": map[string]any{"type": "string", "description": "Search query like Messi World Cup goals or population of Japan"},
+		makeTool("web_search", "Search the internet for real-time or niche info: current stats, recent events, prices, or topics not well covered by Wikipedia.", map[string]any{
+			"query": map[string]any{"type": "string", "description": "Search query, e.g. 'population of Japan 2024' or 'latest iPhone price India'"},
 		}, []string{"query"}),
-		makeTool("wikipedia_summary", "Get a Wikipedia summary about any topic person place event or thing", map[string]any{
-			"topic": map[string]any{"type": "string", "description": "Topic name like Lionel Messi or Bitcoin or Mars"},
+		makeTool("wikipedia_summary", "Get a structured Wikipedia summary for any well-known person, place, event, or concept. Prefer over web_search for encyclopedic topics.", map[string]any{
+			"topic": map[string]any{"type": "string", "description": "Topic name, e.g. 'Lionel Messi' or 'Black Hole' or 'French Revolution'"},
 		}, []string{"topic"}),
-		makeTool("upload_document", "Upload a document to the knowledge base for later Q and A", map[string]any{
-			"name":    map[string]any{"type": "string", "description": "Document name"},
+		makeTool("upload_document", "Upload a document to the knowledge base so it can be queried later with ask_document", map[string]any{
+			"name":    map[string]any{"type": "string", "description": "Document name or filename"},
 			"content": map[string]any{"type": "string", "description": "Full text content of the document"},
 		}, []string{"name", "content"}),
-		makeTool("ask_document", "Ask a question about uploaded documents and get relevant passages. If the user mentions a specific document name, pass it as document_name to search only that document.", map[string]any{
-			"question":      map[string]any{"type": "string", "description": "Question about the documents"},
-			"document_name": map[string]any{"type": "string", "description": "Optional: search only within this specific document (e.g., '176_ngo_reg_cert'). Extract this from the user's message if they mention a document name or number."},
+		makeTool("ask_document", "Ask a question about uploaded documents and get relevant passages. Pass document_name to search a specific document.", map[string]any{
+			"question":      map[string]any{"type": "string", "description": "Question to answer from the documents"},
+			"document_name": map[string]any{"type": "string", "description": "Optional: name of a specific document to search within"},
 		}, []string{"question"}),
-		makeTool("list_documents", "List all uploaded documents in the knowledge base", map[string]any{}, nil),
+		makeTool("list_documents", "List all documents currently in the knowledge base", map[string]any{}, nil),
 	}
 }
 
@@ -282,20 +282,23 @@ func (b *Brain) DecideAction(userMessage string, conversationHistory []Message) 
 	messages := []Message{
 		{
 			Role: "system",
-			Content: "You are a helpful AI assistant with access to real tools. " +
-				"You have these capabilities: " +
-				"1) get_weather/get_forecast - real weather for any city. " +
-				"2) get_user/list_repos/get_repo - real GitHub data. " +
-				"3) add_note/list_notes/search_notes - save and search notes in a database. " +
-				"4) get_crypto_price/get_top_cryptos - real-time cryptocurrency prices. " +
-				"5) get_top_news/search_news - real news headlines. Use search_news for ANY question about current events, people in news, sports, politics, etc. " +
-				"6) shorten_url/generate_qr - shorten URLs and generate QR codes. " +
-				"IMPORTANT RULES: " +
-				"1) For factual questions about statistics, numbers, records, history - ALWAYS use web_search or wikipedia_summary. NEVER guess numbers from memory. " +
-				"2) For current events, trending topics, recent news - use search_news. " +
-				"3) For general knowledge about a person/place/thing - use wikipedia_summary. " +
-				"4) Only answer directly from memory for simple common knowledge (capitals, basic definitions). " +
-				"Be concise and friendly. Do not use <think> tags.",
+			Content: "You are a helpful AI assistant with access to real-time tools. " +
+				"TOOL SELECTION RULES — follow these strictly:\n" +
+				"• Weather questions → get_weather or get_forecast\n" +
+				"• GitHub profiles/repos → get_user, list_repos, get_repo\n" +
+				"• Crypto prices → get_crypto_price or get_top_cryptos\n" +
+				"• Breaking news, current events, sports scores, politics → search_news\n" +
+				"• Facts about a person, place, historical event, or well-known topic → wikipedia_summary\n" +
+				"• Niche queries, real-time stats, or topics unlikely on Wikipedia → web_search\n" +
+				"• Notes → add_note, list_notes, search_notes\n" +
+				"• URLs/QR → shorten_url, generate_qr\n" +
+				"• Documents → upload_document, ask_document, list_documents\n\n" +
+				"GOLDEN RULES:\n" +
+				"1. NEVER answer statistics, records, dates, or numbers from memory — always verify with a tool.\n" +
+				"2. NEVER use both search_news and web_search for the same intent — pick one.\n" +
+				"3. For follow-up questions (e.g. 'when did he retire?'), use context from prior messages before calling a tool.\n" +
+				"4. Strip <think> tags — never include them in your response.\n" +
+				"5. Be concise, factual, and conversational.",
 		},
 	}
 	messages = append(messages, conversationHistory...)
@@ -350,8 +353,11 @@ func (b *Brain) GenerateFinalAnswer(userMessage string, toolName string, toolCal
 	messages := []Message{
 		{
 			Role: "system",
-			Content: "You are a helpful AI assistant. Format the tool results in a clear, " +
-				"conversational way. Be concise but informative.",
+			Content: "You are a helpful AI assistant. A tool was just called to answer the user's question. " +
+				"Synthesize the tool result into a clear, natural conversational answer. " +
+				"Do NOT dump raw data — extract what is relevant and present it cleanly. " +
+				"Use bullet points or short paragraphs where appropriate. " +
+				"If the result is empty or an error, say so helpfully and suggest an alternative.",
 		},
 		{Role: "user", Content: userMessage},
 		{

@@ -13,8 +13,8 @@ import (
 var weatherClient = &http.Client{Timeout: 10 * time.Second}
 
 var weatherTools = []map[string]any{
-	{"name": "get_weather", "description": "Get the REAL current weather for any city", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string", "description": "City name"}}, "required": []string{"city"}}},
-	{"name": "get_forecast", "description": "Get a real 3-day weather forecast for any city", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string", "description": "City name"}}, "required": []string{"city"}}},
+	{"name": "get_weather", "description": "Get the current real-time weather for any city worldwide — temperature, humidity, wind speed, and conditions", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string", "description": "City name, e.g. London, Mumbai, New York"}}, "required": []string{"city"}}},
+	{"name": "get_forecast", "description": "Get a 3-day weather forecast for any city — daily high/low, conditions, and precipitation", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"city": map[string]any{"type": "string", "description": "City name, e.g. London, Mumbai, New York"}}, "required": []string{"city"}}},
 }
 
 type wttrResponse struct {
@@ -70,7 +70,8 @@ func fetchWeather(city string) (string, error) {
 	resp, err := weatherClient.Get(fmt.Sprintf("https://wttr.in/%s?format=j1", url.QueryEscape(city)))
 	if err != nil { return "", err }
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil { return "", fmt.Errorf("read error: %w", err) }
 	var data wttrResponse
 	if err := json.Unmarshal(body, &data); err != nil { return "", fmt.Errorf("parse error") }
 	if len(data.CurrentCondition) == 0 { return "", fmt.Errorf("no data for '%s'", city) }
@@ -84,7 +85,8 @@ func fetchForecast(city string) (string, error) {
 	resp, err := weatherClient.Get(fmt.Sprintf("https://wttr.in/%s?format=j1", url.QueryEscape(city)))
 	if err != nil { return "", err }
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil { return "", fmt.Errorf("read error: %w", err) }
 	var data wttrResponse
 	if err := json.Unmarshal(body, &data); err != nil { return "", fmt.Errorf("parse error") }
 	if len(data.Weather) == 0 { return "", fmt.Errorf("no forecast for '%s'", city) }

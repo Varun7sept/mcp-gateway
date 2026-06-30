@@ -11,6 +11,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -77,7 +78,14 @@ func (gw *Gateway) forwardToServer(server ConnectedServer, req ForwardRequest) (
 	// Send to the server's MCP endpoint
 	url := server.Config.URL + "/mcp/message"
 
-	httpResp, err := forwardClient.Post(url, "application/json", bytes.NewReader(body))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpResp, err := forwardClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}

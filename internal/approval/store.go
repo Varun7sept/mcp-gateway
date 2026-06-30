@@ -43,6 +43,7 @@ var riskyTools = map[string]RiskLevel{
 type Store struct {
 	mu       sync.RWMutex
 	pending  map[string]*ApprovalRequest
+	notify   map[string]chan struct{} // closed when a request is approved/rejected
 	nextID   int
 	timeout  time.Duration
 	stopCh   chan struct{}
@@ -51,6 +52,7 @@ type Store struct {
 func NewStore(timeout time.Duration) *Store {
 	s := &Store{
 		pending: make(map[string]*ApprovalRequest),
+		notify:  make(map[string]chan struct{}),
 		timeout: timeout,
 		stopCh:  make(chan struct{}),
 	}
@@ -86,6 +88,7 @@ func (s *Store) CreateRequest(username, description, tool string, args map[strin
 		ExpiresAt:   time.Now().Add(s.timeout),
 	}
 	s.pending[id] = req
+	s.notify[id] = make(chan struct{})
 	return req
 }
 
@@ -109,6 +112,10 @@ func (s *Store) Approve(id, username string) (*ApprovalRequest, error) {
 	}
 
 	req.Status = StatusApproved
+	if ch, ok := s.notify[id]; ok {
+		close(ch)
+		delete(s.notify, id)
+	}
 	return req, nil
 }
 
@@ -128,6 +135,10 @@ func (s *Store) Reject(id, username string) (*ApprovalRequest, error) {
 	}
 
 	req.Status = StatusRejected
+	if ch, ok := s.notify[id]; ok {
+		close(ch)
+		delete(s.notify, id)
+	}
 	return req, nil
 }
 
@@ -144,34 +155,52 @@ func (s *Store) GetPending(username string) []ApprovalRequest {
 	return result
 }
 
-func (s *Store) WaitForApproval(id, username string, pollInterval time.Duration) (*ApprovalRequest, error) {
-	for {
-		s.mu.RLock()
-		req, ok := s.pending[id]
-		if !ok {
-			s.mu.RUnlock()
-			return nil, fmt.Errorf("approval request %q not found", id)
-		}
-		status := req.Status
+// WaitForApproval blocks until the request is approved, rejected, or times out.
+// It uses a channel notification instead of busy-polling, so it consumes zero
+// CPU while waiting and responds instantly when the user acts.
+func (s *Store) WaitForApproval(id, username string, _ time.Duration) (*ApprovalRequest, error) {
+	// Grab the notify channel and expiry under the lock.
+	s.mu.RLock()
+	req, ok := s.pending[id]
+	if !ok {
 		s.mu.RUnlock()
+		return nil, fmt.Errorf("approval request %q not found", id)
+	}
+	ch := s.notify[id]
+	expiresAt := req.ExpiresAt
+	s.mu.RUnlock()
 
-		switch status {
-		case StatusApproved:
-			return req, nil
-		case StatusRejected:
-			return nil, fmt.Errorf("action rejected by user")
-		case StatusTimedOut:
-			return nil, fmt.Errorf("approval request timed out")
+	// Wait for signal or timeout — zero CPU burn.
+	timer := time.NewTimer(time.Until(expiresAt))
+	defer timer.Stop()
+
+	select {
+	case <-ch:
+		// Approved or rejected — read final status.
+	case <-timer.C:
+		s.mu.Lock()
+		if r, exists := s.pending[id]; exists && r.Status == StatusPending {
+			r.Status = StatusTimedOut
 		}
+		s.mu.Unlock()
+		return nil, fmt.Errorf("approval request timed out")
+	}
 
-		if time.Now().After(req.ExpiresAt) {
-			s.mu.Lock()
-			req.Status = StatusTimedOut
-			s.mu.Unlock()
-			return nil, fmt.Errorf("approval request timed out")
-		}
+	s.mu.RLock()
+	req, ok = s.pending[id]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("approval request %q not found after notification", id)
+	}
 
-		time.Sleep(pollInterval)
+	switch req.Status {
+	case StatusApproved:
+		copy := *req
+		return &copy, nil
+	case StatusRejected:
+		return nil, fmt.Errorf("action rejected by user")
+	default:
+		return nil, fmt.Errorf("approval request %q ended with unexpected status: %s", id, req.Status)
 	}
 }
 
@@ -188,6 +217,10 @@ func (s *Store) reapLoop() {
 			for id, req := range s.pending {
 				if req.Status == StatusPending && now.After(req.ExpiresAt) {
 					req.Status = StatusTimedOut
+					if ch, ok := s.notify[id]; ok {
+						close(ch)
+						delete(s.notify, id)
+					}
 				}
 				if req.Status != StatusPending && now.After(req.CreatedAt.Add(24*time.Hour)) {
 					delete(s.pending, id)

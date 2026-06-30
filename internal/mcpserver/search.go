@@ -11,9 +11,11 @@ import (
 	"time"
 )
 
+var searchClient = &http.Client{Timeout: 10 * time.Second}
+
 var searchTools = []map[string]any{
-	{"name": "web_search", "description": "Search the internet for information", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string", "description": "Search query"}}, "required": []string{"query"}}},
-	{"name": "wikipedia_summary", "description": "Get a Wikipedia summary about any topic", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"topic": map[string]any{"type": "string", "description": "Topic to look up"}}, "required": []string{"topic"}}},
+	{"name": "web_search", "description": "Search the internet for real-time or niche information. Use for current stats, prices, recent events, or topics not well covered by Wikipedia.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string", "description": "Search query e.g. population of Japan 2024 or latest iPhone price India"}}, "required": []string{"query"}}},
+	{"name": "wikipedia_summary", "description": "Get a structured Wikipedia summary for any well-known person, place, historical event, or concept. Prefer this over web_search for encyclopedic topics.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"topic": map[string]any{"type": "string", "description": "Topic name e.g. Lionel Messi or Black Hole or French Revolution"}}, "required": []string{"topic"}}},
 }
 
 func StartSearch(port string) error {
@@ -54,14 +56,14 @@ func handleSearchTool(w http.ResponseWriter, req MCPRequest) {
 }
 
 func duckDuckGo(query string) (string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.duckduckgo.com/?q=%s&format=json&no_html=1&skip_disambig=1", url.QueryEscape(query)), nil)
 	if err != nil { return "", err }
 	req.Header.Set("User-Agent", "MCP-Gateway/1.0 (https://github.com/varun7sept/mcp-gateway)")
-	resp, err := client.Do(req)
+	resp, err := searchClient.Do(req)
 	if err != nil { return "", err }
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil { return "", fmt.Errorf("read error: %w", err) }
 	var data struct { Abstract, AbstractSource, AbstractURL, Answer, AnswerType, Heading string; RelatedTopics []struct { Text, FirstURL string } `json:"RelatedTopics"` }
 	if err := json.Unmarshal(body, &data); err != nil { return "", fmt.Errorf("parse error") }
 	var result strings.Builder
@@ -77,15 +79,15 @@ func duckDuckGo(query string) (string, error) {
 }
 
 func wikiSummary(topic string) (string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", fmt.Sprintf("https://en.wikipedia.org/api/rest_v1/page/summary/%s", url.PathEscape(strings.ReplaceAll(topic, " ", "_"))), nil)
 	if err != nil { return "", err }
 	req.Header.Set("User-Agent", "MCP-Gateway/1.0 (https://github.com/varun7sept/mcp-gateway)")
-	resp, err := client.Do(req)
+	resp, err := searchClient.Do(req)
 	if err != nil { return "", err }
 	defer resp.Body.Close()
 	if resp.StatusCode == 404 { return fmt.Sprintf("No Wikipedia article for '%s'", topic), nil }
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil { return "", fmt.Errorf("read error: %w", err) }
 	var data struct { Title string `json:"title"`; Extract string `json:"extract"`; Description string `json:"description"`; ContentURLs struct { Desktop struct { Page string `json:"page"` } `json:"desktop"` } `json:"content_urls"` }
 	if err := json.Unmarshal(body, &data); err != nil { return "", fmt.Errorf("parse error") }
 	result := fmt.Sprintf("Wikipedia: %s\n", data.Title)
