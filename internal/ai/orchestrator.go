@@ -90,7 +90,7 @@ func (b *Brain) ProcessWithOrchestrator(
 	if report != nil && !report.Complete {
 		var failedDescriptions []string
 		for _, task := range plan.Tasks {
-			if task.Status == TaskFailed {
+			if task.GetStatus() == TaskFailed {
 				failedDescriptions = append(failedDescriptions,
 					fmt.Sprintf("tool '%s' failed: %s", task.Tool, task.Error))
 			}
@@ -106,7 +106,7 @@ func (b *Brain) ProcessWithOrchestrator(
 				usesNewTools := false
 				failedTools := make(map[string]bool)
 				for _, t := range plan.Tasks {
-					if t.Status == TaskFailed {
+					if t.GetStatus() == TaskFailed {
 						failedTools[t.Tool] = true
 					}
 				}
@@ -120,7 +120,7 @@ func (b *Brain) ProcessWithOrchestrator(
 					retryReport := b.ExecutePlan(retryPlan, callTool)
 					// Merge successful retry results into original plan
 					for _, retryTask := range retryPlan.Tasks {
-						if retryTask.Status == TaskDone {
+						if retryTask.GetStatus() == TaskDone {
 							plan.Tasks = append(plan.Tasks, retryTask)
 						}
 					}
@@ -137,7 +137,7 @@ func (b *Brain) ProcessWithOrchestrator(
 	if cfg != nil && cfg.Memory != nil {
 		var toolsUsed []string
 		for _, t := range plan.Tasks {
-			if t.Status == TaskDone {
+			if t.GetStatus() == TaskDone {
 				toolsUsed = append(toolsUsed, t.Tool)
 			}
 		}
@@ -252,11 +252,11 @@ func (b *Brain) compileResults(plan *Plan, report *ExecutionReport, userMessage 
 			ToolName:  task.Tool,
 			Arguments: task.Arguments,
 		}
-		if task.Status == TaskDone {
-			step.Result = task.Result
-			results = append(results, fmt.Sprintf("Tool '%s' result: %s", task.Tool, task.Result))
+		if task.GetStatus() == TaskDone {
+			step.Result = task.GetResult()
+			results = append(results, fmt.Sprintf("Tool '%s' result: %s", task.Tool, task.GetResult()))
 		} else {
-			step.Result = task.Error
+			step.Result = task.Error  // Error field not written concurrently after done
 			failedTasks = append(failedTasks, fmt.Sprintf("'%s' (error: %s)", task.Description, task.Error))
 		}
 		steps = append(steps, step)

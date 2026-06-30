@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 )
 
 type TaskStatus string
@@ -22,6 +23,7 @@ type TaskDefinition struct {
 	Tool         string            `json:"tool"`
 	Arguments    map[string]any    `json:"arguments"`
 	Dependencies []int             `json:"depends_on"`
+	mu           sync.RWMutex      // protects Status, Result, Error
 	Status       TaskStatus        `json:"-"`
 	Result       string            `json:"-"`
 	Error        string            `json:"-"`
@@ -31,6 +33,39 @@ type TaskDefinition struct {
 type Plan struct {
 	Goal          string           `json:"goal"`
 	Tasks         []*TaskDefinition `json:"tasks"`
+}
+
+// Thread-safe accessors for TaskDefinition status/result fields.
+func (t *TaskDefinition) GetStatus() TaskStatus {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.Status
+}
+
+func (t *TaskDefinition) SetStatus(s TaskStatus) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Status = s
+}
+
+func (t *TaskDefinition) SetDone(result string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Status = TaskDone
+	t.Result = result
+}
+
+func (t *TaskDefinition) SetFailed(errMsg string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.Status = TaskFailed
+	t.Error = errMsg
+}
+
+func (t *TaskDefinition) GetResult() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.Result
 }
 
 func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {

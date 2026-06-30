@@ -33,25 +33,23 @@ func (b *Brain) ExecutePlan(plan *Plan, callTool func(name string, args map[stri
 		errChan := make(chan *TaskDefinition, len(group))
 
 		for _, task := range group {
-			task.Status = TaskInProgress
+			task.SetStatus(TaskInProgress)
 			wg.Add(1)
 
 			go func(t *TaskDefinition) {
 				defer wg.Done()
 				resolver := func(taskID int) string {
-					if dep, ok := taskMap[taskID]; ok && dep.Status == TaskDone {
-						return dep.Result
+					if dep, ok := taskMap[taskID]; ok && dep.GetStatus() == TaskDone {
+						return dep.GetResult()
 					}
 					return ""
 				}
 				result, err := b.executeWithRetry(t, callTool, resolver)
 				if err != nil {
-					t.Status = TaskFailed
-					t.Error = err.Error()
+					t.SetFailed(err.Error())
 					errChan <- t
 				} else {
-					t.Status = TaskDone
-					t.Result = result
+					t.SetDone(result)
 				}
 			}(task)
 		}
@@ -63,8 +61,7 @@ func (b *Brain) ExecutePlan(plan *Plan, callTool func(name string, args map[stri
 			for _, t := range plan.Tasks {
 				for _, dep := range t.Dependencies {
 					if dep == failedTask.ID {
-						t.Status = TaskFailed
-						t.Error = fmt.Sprintf("dependency %d (%s) failed: %s", failedTask.ID, failedTask.Tool, failedTask.Error)
+						t.SetFailed(fmt.Sprintf("dependency %d (%s) failed: %s", failedTask.ID, failedTask.Tool, failedTask.Error))
 					}
 				}
 			}
@@ -73,7 +70,7 @@ func (b *Brain) ExecutePlan(plan *Plan, callTool func(name string, args map[stri
 
 	report.Complete = true
 	for _, t := range plan.Tasks {
-		if t.Status == TaskFailed {
+		if t.GetStatus() == TaskFailed {
 			report.Complete = false
 			break
 		}
@@ -284,7 +281,7 @@ func topologicalSort(tasks []*TaskDefinition, taskMap map[int]*TaskDefinition) [
 	for {
 		var current []int
 		for _, t := range tasks {
-			if t.Status == TaskPending && inDegree[t.ID] == 0 {
+			if t.GetStatus() == TaskPending && inDegree[t.ID] == 0 {
 				current = append(current, t.ID)
 			}
 		}
