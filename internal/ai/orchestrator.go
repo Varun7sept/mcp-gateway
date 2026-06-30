@@ -218,7 +218,18 @@ func (b *Brain) checkApprovals(plan *Plan, cfg *OrchestratorConfig) (*Orchestrat
 }
 
 func (b *Brain) fallbackToDirect(userMessage string, messages []Message, callTool func(name string, args map[string]any) (string, error), start time.Time) (*OrchestratorResult, error) {
-	result, err := b.RunAgentWithHistory(userMessage, nil, callTool)
+	// Convert []Message → []map[string]string so RunAgentWithHistory gets full context.
+	// This ensures pronoun resolution works — "he" → correct person from history.
+	var history []map[string]string
+	for _, m := range messages {
+		if m.Role == "user" || m.Role == "assistant" {
+			history = append(history, map[string]string{
+				"role":    m.Role,
+				"content": m.Content,
+			})
+		}
+	}
+	result, err := b.RunAgentWithHistory(userMessage, history, callTool)
 	if err != nil {
 		return nil, err
 	}
@@ -248,11 +259,12 @@ func (b *Brain) handleNoTools(userMessage string, messages []Message, callTool f
 	contextMessages := append([]Message{}, messages...)
 	contextMessages[0] = Message{
 		Role: "system",
-		Content: "You are a helpful AI assistant. Answer the user's question using ONLY information present in the conversation history above.\n\n" +
+		Content: "You are a helpful AI assistant. Answer the user's question using the conversation history above.\n\n" +
 			"RULES:\n" +
-			"1. If the answer is clearly in the history, answer directly and concisely.\n" +
-			"2. If the question asks for a specific fact (date, stat, number, event) that is NOT in the history, respond with exactly: NEED_TOOL\n" +
-			"3. Never make up facts. Never say 'I don't have tools'. Either answer or signal NEED_TOOL.",
+			"1. Always resolve pronouns from context — 'he/she/they/it/his/her' refer to the subject of the prior conversation. Never ask 'who do you mean?'.\n" +
+			"2. If the answer is clearly in the history (e.g. a date, name, fact was mentioned), answer directly and concisely.\n" +
+			"3. If the question asks for a specific fact (date, stat, number, event) that is genuinely NOT anywhere in the history, respond with exactly: NEED_TOOL\n" +
+			"4. Never make up facts. Never say 'I don't have tools' or ask for clarification. Either answer from history or respond NEED_TOOL.",
 	}
 
 	choice, err := b.callGroq(contextMessages)

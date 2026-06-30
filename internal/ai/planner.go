@@ -74,18 +74,26 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 			Role: "system",
 			Content: "You are a task planning AI. Your job is to decompose the user's goal into the minimum number of tool calls needed.\n\n" +
 				"PLANNING RULES:\n" +
-				"1. Return an EMPTY tasks array [] for: greetings, simple math, or any question whose answer is ALREADY present in the conversation history above. If a previous assistant message already contains the information being asked about, return [] — do NOT call a tool again.\n" +
-				"2. Independent tasks (no shared data) CAN run in parallel — leave depends_on empty [].\n" +
-				"3. Tasks that need a prior task's output MUST set depends_on and reference the result with ${result:N} (N = task ID). Never use other placeholder formats.\n" +
-				"4. Each task calls EXACTLY ONE tool.\n" +
-				"5. For multi-location queries (e.g. 'weather in London and Paris'), make one task per location.\n" +
-				"6. For 'search and summarize' — ONE search task only. Summarization is automatic.\n" +
-				"7. NEVER use both search_news AND web_search for the same intent. Pick exactly one:\n" +
+				"1. Return EMPTY tasks [] when ANY of these are true:\n" +
+				"   • Greetings or chit-chat\n" +
+				"   • Simple math\n" +
+				"   • The answer (even partial) is already present in a previous assistant message in this conversation — re-read the history carefully before deciding to call a tool.\n" +
+				"   Example: if history says 'born in 1971' and user asks 'when was he born?' → return []\n" +
+				"2. PRONOUN RESOLUTION — Before writing any tool argument, resolve all pronouns and references using the conversation history.\n" +
+				"   • 'he/she/they/it' → replace with the actual name from context\n" +
+				"   • 'that repo/his company/her book' → replace with the actual entity\n" +
+				"   • NEVER use 'he', 'she', 'it', 'they', 'his', 'her', 'that' in tool arguments — always use the real name.\n" +
+				"   Example: user asks 'when was he born?' after talking about Elon Musk → query must be 'Elon Musk birth date'\n" +
+				"3. Independent tasks (no shared data) CAN run in parallel — leave depends_on empty [].\n" +
+				"4. Tasks that need a prior task's output MUST set depends_on and reference the result with ${result:N} (N = task ID). Never use other placeholder formats.\n" +
+				"5. Each task calls EXACTLY ONE tool.\n" +
+				"6. For multi-location queries (e.g. 'weather in London and Paris'), make one task per location.\n" +
+				"7. For 'search and summarize' — ONE search task only. Summarization is automatic.\n" +
+				"8. NEVER use both search_news AND web_search for the same intent. Pick exactly one:\n" +
 				"   • Breaking news / current events / sports / politics → search_news\n" +
 				"   • Factual, historical, encyclopedic topics → wikipedia_summary\n" +
 				"   • Niche, real-time, or non-Wikipedia topics → web_search\n" +
-				"8. MAXIMUM 6 TASKS. If more are needed, pick the 6 most important.\n" +
-				"9. Do NOT create a task just to repeat information already in the conversation history.\n\n" +
+				"9. MAXIMUM 6 TASKS. If more are needed, pick the 6 most important.\n\n" +
 				"Available tools: get_weather, get_forecast, get_user, list_repos, get_repo, add_note, list_notes, " +
 				"search_notes, get_crypto_price, get_top_cryptos, get_top_news, search_news, " +
 				"shorten_url, generate_qr, expand_url, web_search, wikipedia_summary, " +
