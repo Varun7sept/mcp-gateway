@@ -229,14 +229,43 @@ func (b *Brain) fallbackToDirect(userMessage string, messages []Message, callToo
 }
 
 func (b *Brain) handleNoTools(userMessage string, messages []Message, callTool func(name string, args map[string]any) (string, error), start time.Time) (*OrchestratorResult, error) {
-	choice, err := b.callGroq(messages)
+	// Count how many user/assistant turns exist (excluding the current user message).
+	// If this is the very first message there's no history to draw from — go straight
+	// to the tool agent so it can call a tool rather than saying "I don't know".
+	historyCount := 0
+	for _, m := range messages {
+		if m.Role == "user" || m.Role == "assistant" {
+			historyCount++
+		}
+	}
+	// historyCount includes the current user message, so <=1 means no prior turns.
+	if historyCount <= 1 {
+		return b.fallbackToDirect(userMessage, messages, callTool, start)
+	}
+
+	// There IS prior context — ask the model to answer from it, but signal
+	// NEED_TOOL if a specific fact isn't in the history.
+	contextMessages := append([]Message{}, messages...)
+	contextMessages[0] = Message{
+		Role: "system",
+		Content: "You are a helpful AI assistant. Answer the user's question using ONLY information present in the conversation history above.\n\n" +
+			"RULES:\n" +
+			"1. If the answer is clearly in the history, answer directly and concisely.\n" +
+			"2. If the question asks for a specific fact (date, stat, number, event) that is NOT in the history, respond with exactly: NEED_TOOL\n" +
+			"3. Never make up facts. Never say 'I don't have tools'. Either answer or signal NEED_TOOL.",
+	}
+
+	choice, err := b.callGroq(contextMessages)
 	if err != nil {
-		return nil, err
+		return b.fallbackToDirect(userMessage, messages, callTool, start)
 	}
 	answer := stripThinkTags(choice.Content)
-	if strings.TrimSpace(answer) == "" {
-		answer = "I understand your question but I don't have the tools needed to answer it fully. Could you rephrase or ask something I can help with using my available tools?"
+
+	// If model signals it needs a tool, or answer is blank, fall through to tool agent.
+	if strings.TrimSpace(answer) == "" || strings.Contains(strings.ToUpper(answer), "NEED_TOOL") {
+		return b.fallbackToDirect(userMessage, messages, callTool, start)
 	}
+
 	return &OrchestratorResult{
 		Answer: answer,
 	}, nil
@@ -286,9 +315,29 @@ func (b *Brain) compileResults(plan *Plan, report *ExecutionReport, userMessage 
 		{Role: "user", Content: fmt.Sprintf("User asked: %s\n\nTool results:\n%s\n\nNow write a helpful answer:", userMessage, finalAnswer)},
 	}
 
-	summaryResp, err := b.callGroq(summaryMessages)
-	if err == nil && summaryResp.Content != "" {
-		finalAnswer = stripThinkTags(summaryResp.Content)
+	// Retry synthesis up to 2 times — Groq can occasionally return empty on first call.
+	for attempt := 0; attempt < 2; attempt++ {
+		summaryResp, err := b.callGroq(summaryMessages)
+		if err == nil && strings.TrimSpace(summaryResp.Content) != "" {
+			finalAnswer = stripThinkTags(summaryResp.Content)
+			break
+		}
+	}
+
+	// If synthesis still failed/empty, strip the "Tool 'X' result: " prefixes and
+	// return clean raw data rather than the labelled dump.
+	if strings.TrimSpace(finalAnswer) == "" || strings.HasPrefix(finalAnswer, "Tool '") {
+		var cleaned []string
+		for _, r := range results {
+			if idx := strings.Index(r, " result: "); idx != -1 {
+				cleaned = append(cleaned, strings.TrimSpace(r[idx+9:]))
+			} else {
+				cleaned = append(cleaned, r)
+			}
+		}
+		if len(cleaned) > 0 {
+			finalAnswer = strings.Join(cleaned, "\n\n")
+		}
 	}
 
 	return finalAnswer, steps
