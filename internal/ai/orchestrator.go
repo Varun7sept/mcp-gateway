@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"github.com/varunbanda/mcp-gateway/internal/approval"
+	"github.com/varunbanda/mcp-gateway/internal/memory"
 )
 
 type OrchestratorConfig struct {
-	Memory         MemoryStore
+	Memory         memory.MemoryStore
 	ApprovalStore  *approval.Store
 	ApprovalUser   string
+	UserID         string
+	SessionID      string
 	// ApprovedTools lists tool names the user has already approved this request.
 	// checkApprovals skips these so the user is never asked twice.
 	ApprovedTools  []string
@@ -39,7 +42,7 @@ func (b *Brain) ProcessWithOrchestrator(
 
 	relevantMemories := ""
 	if cfg != nil && cfg.Memory != nil {
-		relevantMemories = b.RetrieveRelevantMemories(userMessage)
+		relevantMemories = b.RetrieveRelevantMemories(userMessage, cfg.UserID)
 	}
 
 	if relevantMemories != "" {
@@ -141,11 +144,16 @@ func (b *Brain) ProcessWithOrchestrator(
 				toolsUsed = append(toolsUsed, t.Tool)
 			}
 		}
-		cfg.Memory.Save(MemoryEntry{
-			Query:     userMessage,
-			Answer:    finalAnswer,
-			ToolsUsed: toolsUsed,
-			Timestamp: time.Now(),
+		cfg.Memory.Save(memory.MemoryEntry{
+			MemoryID:        memory.GenerateMemoryID(userMessage, time.Now()),
+			UserID:          cfg.UserID,
+			SessionID:       cfg.SessionID,
+			Query:           userMessage,
+			Answer:          finalAnswer,
+			Summary:         "",
+			ImportanceScore: 0,
+			ToolsUsed:       toolsUsed,
+			CreatedAt:       time.Now(),
 		})
 	}
 

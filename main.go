@@ -14,11 +14,16 @@ import (
 	"github.com/varunbanda/mcp-gateway/internal/approval"
 	"github.com/varunbanda/mcp-gateway/internal/auth"
 	"github.com/varunbanda/mcp-gateway/internal/config"
+	"github.com/varunbanda/mcp-gateway/internal/conversation"
 	"github.com/varunbanda/mcp-gateway/internal/gateway"
 	"github.com/varunbanda/mcp-gateway/internal/logger"
+	"github.com/varunbanda/mcp-gateway/internal/memory"
 	"github.com/varunbanda/mcp-gateway/internal/mcpserver"
 	"github.com/varunbanda/mcp-gateway/internal/notes"
 	"github.com/varunbanda/mcp-gateway/internal/server"
+
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func main() {
@@ -38,22 +43,77 @@ func main() {
 	// Create request logger (keeps last 1000 requests)
 	reqLogger := logger.New(1000)
 
-	// Create AI brain (optional — needs GROQ_API_KEY)
+	// Connect to MongoDB for memory, auth, and conversation storage
+	var mongoClient *mongo.Client
+	if cfg.MongoDB.URI != "" {
+		mongoClient, err = mongo.Connect(context.Background(), options.Client().ApplyURI(cfg.MongoDB.URI))
+		if err != nil {
+			log.Printf("WARNING: MongoDB connection failed: %v", err)
+			mongoClient = nil
+		} else {
+			err = mongoClient.Ping(context.Background(), nil)
+			if err != nil {
+				log.Printf("WARNING: MongoDB ping failed: %v", err)
+				mongoClient = nil
+			} else {
+				log.Println("MongoDB connected")
+			}
+		}
+	}
+
+	// Create memory subsystem (retrieval memory)
+	var memStore memory.MemoryStore
+	if mongoClient != nil {
+		groqKey := os.Getenv("GROQ_API_KEY")
+		if groqKey == "" {
+			groqKey = cfg.Memory.GroqAPIKey
+		}
+
+		embedder := memory.NewGroqEmbeddingGenerator(groqKey, cfg.Memory.EmbeddingModel)
+
+		qdrantClient := memory.NewQdrantClient(
+			cfg.Memory.QdrantURL,
+			cfg.Memory.QdrantAPIKey,
+			cfg.Memory.QdrantCollection,
+			1536,
+		)
+
+		memStore = memory.NewMongoDBStore(
+			mongoClient,
+			cfg.MongoDB.Database,
+			cfg.Memory.MongoDBMemoryCollection,
+			nil,
+			embedder,
+			qdrantClient,
+		)
+		log.Println("Retrieval memory subsystem initialized (MongoDB + Qdrant)")
+	} else {
+		log.Println("Retrieval memory disabled (MongoDB not configured)")
+	}
+
+	// Create memory for AI brain
 	var brain *ai.Brain
 	groqKey := os.Getenv("GROQ_API_KEY")
 	if groqKey != "" {
 		brain = ai.New(groqKey)
-		// Attach memory store for cross-session recall
-		memory := ai.NewInMemoryStore(200)
-		brain.WithMemory(memory)
-		log.Println("AI Chat enabled (Groq API) with memory store")
+		if memStore != nil {
+			brain.WithMemory(memStore)
+		}
+		log.Println("AI Chat enabled (Groq API) with retrieval memory")
 	} else {
 		log.Println("AI Chat disabled (set GROQ_API_KEY to enable)")
 	}
 
+	// Create conversation history store
+	var convStore conversation.ConversationStore
+	if mongoClient != nil {
+		convStore = conversation.NewMongoDBStore(mongoClient, cfg.MongoDB.Database)
+		log.Println("Conversation history store initialized (MongoDB)")
+	}
+
 	// Create auth handler (MongoDB + JWT)
 	var authenticator *auth.Auth
-	if cfg.MongoDB.URI != "" {
+	if cfg.MongoDB.URI != "" && mongoClient != nil {
 		var err error
 		authenticator, err = auth.New(auth.MongoConfig{
 			URI:      cfg.MongoDB.URI,
@@ -117,6 +177,9 @@ func main() {
 
 	srv := server.New(gw, reqLogger, brain, authenticator, port)
 	srv.WithApprovalStore(approvalStore)
+	if convStore != nil {
+		srv.WithConversationStore(convStore, &cfg.Conversation)
+	}
 	if err := srv.Start(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}

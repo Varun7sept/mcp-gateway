@@ -9,6 +9,21 @@ mongodb:
   uri: ""  # Set MONGO_URI env var in production
   database: "mcp_gateway"
 
+memory:
+  retrieval_top_k: 5
+  embedding_model: "llama-3.3-70b-versatile"
+  qdrant_url: "http://localhost:6333"
+  qdrant_collection: "mcp_memories"
+  qdrant_api_key: ""
+  mongodb_memory_collection: "memories"
+  groq_api_key: ""
+
+conversation:
+  recent_message_window: 20
+  conversation_summary_message_threshold: 20
+  conversation_summary_token_threshold: 8000
+  mongodb_chat_collection: "chat_sessions"
+
 servers:
   - name: "weather"
     url: "http://localhost:3001"

@@ -34,11 +34,32 @@ type MongoConfig struct {
 	Database string `yaml:"database"`
 }
 
+// MemoryConfig holds retrieval memory subsystem settings.
+type MemoryConfig struct {
+	RetrievalTopK        int    `yaml:"retrieval_top_k"`
+	EmbeddingModel       string `yaml:"embedding_model"`
+	QdrantURL            string `yaml:"qdrant_url"`
+	QdrantCollection     string `yaml:"qdrant_collection"`
+	QdrantAPIKey         string `yaml:"qdrant_api_key"`
+	MongoDBMemoryCollection string `yaml:"mongodb_memory_collection"`
+	GroqAPIKey           string `yaml:"groq_api_key"`
+}
+
+// ConversationConfig holds conversation history subsystem settings.
+type ConversationConfig struct {
+	RecentMessageWindow     int `yaml:"recent_message_window"`
+	SummaryMessageThreshold int `yaml:"conversation_summary_message_threshold"`
+	SummaryTokenThreshold   int `yaml:"conversation_summary_token_threshold"`
+	MongoDBChatCollection   string `yaml:"mongodb_chat_collection"`
+}
+
 // Config is the top-level structure that maps to the entire YAML file.
 type Config struct {
-	Gateway  GatewayConfig  `yaml:"gateway"`
-	MongoDB  MongoConfig    `yaml:"mongodb"`
-	Servers  []ServerConfig `yaml:"servers"`
+	Gateway      GatewayConfig      `yaml:"gateway"`
+	MongoDB      MongoConfig        `yaml:"mongodb"`
+	Memory       MemoryConfig       `yaml:"memory"`
+	Conversation ConversationConfig `yaml:"conversation"`
+	Servers      []ServerConfig     `yaml:"servers"`
 }
 
 // Load reads a YAML file from the given path and returns a Config.

@@ -16,6 +16,8 @@ import (
 	"github.com/varunbanda/mcp-gateway/internal/ai" // Used for Brain type
 	"github.com/varunbanda/mcp-gateway/internal/approval"
 	"github.com/varunbanda/mcp-gateway/internal/auth"
+	"github.com/varunbanda/mcp-gateway/internal/config"
+	"github.com/varunbanda/mcp-gateway/internal/conversation"
 	"github.com/varunbanda/mcp-gateway/internal/gateway"
 	"github.com/varunbanda/mcp-gateway/internal/logger"
 )
@@ -102,6 +104,8 @@ type Server struct {
 	auth          *auth.Auth
 	port          int
 	approvalStore *approval.Store
+	convStore     conversation.ConversationStore
+	convConfig    config.ConversationConfig
 	authLimiter   *rateLimiter
 	// memHistory holds per-session chat history when MongoDB is not configured.
 	memHistoryMu sync.RWMutex
@@ -124,6 +128,15 @@ func New(gw *gateway.Gateway, reqLogger *logger.Logger, aiBrain *ai.Brain, authe
 // WithApprovalStore attaches a human-in-the-loop approval store.
 func (s *Server) WithApprovalStore(as *approval.Store) *Server {
 	s.approvalStore = as
+	return s
+}
+
+// WithConversationStore attaches a conversation history store.
+func (s *Server) WithConversationStore(store conversation.ConversationStore, cfg *config.ConversationConfig) *Server {
+	s.convStore = store
+	if cfg != nil {
+		s.convConfig = *cfg
+	}
 	return s
 }
 

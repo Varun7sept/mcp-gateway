@@ -20,6 +20,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/varunbanda/mcp-gateway/internal/memory"
 )
 
 // Brain is the AI engine that processes user questions.
@@ -27,11 +29,11 @@ type Brain struct {
 	apiKey     string
 	models     []string
 	httpClient *http.Client
-	memory     MemoryStore
+	memory     memory.MemoryStore
 }
 
 // WithMemory attaches a memory store for cross-session recall.
-func (b *Brain) WithMemory(m MemoryStore) *Brain {
+func (b *Brain) WithMemory(m memory.MemoryStore) *Brain {
 	b.memory = m
 	return b
 }
