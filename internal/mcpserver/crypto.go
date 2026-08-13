@@ -6,6 +6,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -65,13 +67,15 @@ func shortCryptoBody(body []byte) string {
 	return excerpt
 }
 
-// coingeckoBaseURL and coinPaprikaBaseURL are package-level so tests can point
-// them at a fake HTTP server instead of hitting the real APIs. CoinPaprika is
-// the automatic fallback because CoinGecko can block datacenter IPs (e.g.
-// Render) with HTTP 400.
+// coingeckoBaseURL, coinPaprikaBaseURL, and binanceBaseURL are package-level
+// so tests can point them at a fake HTTP server instead of hitting the real
+// APIs. Both CoinGecko and CoinPaprika can block datacenter IPs (e.g. Render)
+// with HTTP 400, so Binance is the final fallback: CoinGecko → CoinPaprika →
+// Binance.
 var (
 	coingeckoBaseURL   = "https://api.coingecko.com/api/v3"
 	coinPaprikaBaseURL = "https://api.coinpaprika.com/v1"
+	binanceBaseURL     = "https://api.binance.com/api/v3"
 )
 
 // paprikaCoinIDs maps CoinGecko-style coin names to CoinPaprika ticker IDs.
@@ -82,6 +86,20 @@ var paprikaCoinIDs = map[string]string{
 	"dogecoin": "doge-dogecoin",
 	"cardano":  "ada-cardano",
 	"xrp":      "xrp-xrp",
+}
+
+// binanceSymbols maps coin names to Binance USDT spot symbols.
+var binanceSymbols = map[string]string{
+	"bitcoin":  "BTCUSDT",
+	"ethereum": "ETHUSDT",
+	"solana":   "SOLUSDT",
+	"dogecoin": "DOGEUSDT",
+	"cardano":  "ADAUSDT",
+	"xrp":      "XRPUSDT",
+	"litecoin": "LTCUSDT",
+	"polkadot": "DOTUSDT",
+	"avalanche": "AVAXUSDT",
+	"chainlink": "LINKUSDT",
 }
 
 func fetchCrypto(coin string) (string, error) {
@@ -95,10 +113,15 @@ func fetchCryptoWithClient(coin string, client *http.Client) (string, error) {
 	}
 	log.Printf("[CRYPTO] CoinGecko failed (%v) — falling back to CoinPaprika", err)
 	paprikaResult, paprikaErr := fetchCryptoFromCoinPaprika(coin, client)
-	if paprikaErr != nil {
-		return "", fmt.Errorf("%v; CoinPaprika fallback also failed: %w", err, paprikaErr)
+	if paprikaErr == nil {
+		return paprikaResult, nil
 	}
-	return paprikaResult, nil
+	log.Printf("[CRYPTO] CoinPaprika failed (%v) — falling back to Binance", paprikaErr)
+	binanceResult, binanceErr := fetchCryptoFromBinance(coin, client)
+	if binanceErr == nil {
+		return binanceResult, nil
+	}
+	return "", fmt.Errorf("%v; CoinPaprika fallback also failed: %v; Binance fallback also failed: %w", err, paprikaErr, binanceErr)
 }
 
 func fetchCryptoFromCoinGecko(coin string, client *http.Client) (string, error) {
@@ -199,10 +222,15 @@ func fetchTopWithClient(client *http.Client) (string, error) {
 	}
 	log.Printf("[CRYPTO] CoinGecko failed (%v) — falling back to CoinPaprika", err)
 	paprikaResult, paprikaErr := fetchTopFromCoinPaprika(client)
-	if paprikaErr != nil {
-		return "", fmt.Errorf("%v; CoinPaprika fallback also failed: %w", err, paprikaErr)
+	if paprikaErr == nil {
+		return paprikaResult, nil
 	}
-	return paprikaResult, nil
+	log.Printf("[CRYPTO] CoinPaprika failed (%v) — falling back to Binance", paprikaErr)
+	binanceResult, binanceErr := fetchTopFromBinance(client)
+	if binanceErr == nil {
+		return binanceResult, nil
+	}
+	return "", fmt.Errorf("%v; CoinPaprika fallback also failed: %v; Binance fallback also failed: %w", err, paprikaErr, binanceErr)
 }
 
 func fetchTopFromCoinGecko(client *http.Client) (string, error) {
@@ -278,4 +306,111 @@ func fetchTopFromCoinPaprika(client *http.Client) (string, error) {
 		lines = append(lines, fmt.Sprintf("  %d. %s (%s) — $%.2f (%s%.1f%%)", i+1, c.Name, strings.ToUpper(c.Symbol), c.Quotes["USD"].Price, d, c.Quotes["USD"].Change24h))
 	}
 	return "Top 10 Cryptocurrencies (CoinPaprika):\n" + strings.Join(lines, "\n"), nil
+}
+
+func fetchCryptoFromBinance(coin string, client *http.Client) (string, error) {
+	symbol := binanceSymbols[strings.ToLower(coin)]
+	if symbol == "" {
+		symbol = strings.ToUpper(coin) + "USDT"
+	}
+	url := fmt.Sprintf("%s/ticker/24hr?symbol=%s", binanceBaseURL, symbol)
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("Binance request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCryptoBodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to read Binance response: %w", err)
+	}
+
+	log.Printf("[CRYPTO] Binance status=%d content-type=%s", resp.StatusCode, resp.Header.Get("Content-Type"))
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("Binance API returned HTTP %d: %s", resp.StatusCode, shortCryptoBody(body))
+	}
+
+	var data struct {
+		Symbol           string `json:"symbol"`
+		LastPrice        string `json:"lastPrice"`
+		ChangePercent    string `json:"priceChangePercent"`
+		QuoteVolume      string `json:"quoteVolume"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return "", fmt.Errorf("invalid Binance JSON response: %v (body: %s)", err, shortCryptoBody(body))
+	}
+	last, err := strconv.ParseFloat(data.LastPrice, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid Binance price %q for %s", data.LastPrice, symbol)
+	}
+	change, _ := strconv.ParseFloat(data.ChangePercent, 64)
+	volume, _ := strconv.ParseFloat(data.QuoteVolume, 64)
+	dir := "up"
+	if change < 0 {
+		dir = "down"
+	}
+	return fmt.Sprintf("%s Price (Binance):\n  USD: $%.2f\n  24h: %.2f%% (%s)\n  24h Volume: $%.0f",
+		strings.Title(coin), last, change, dir, volume), nil
+}
+
+func fetchTopFromBinance(client *http.Client) (string, error) {
+	resp, err := client.Get(binanceBaseURL + "/ticker/24hr")
+	if err != nil {
+		return "", fmt.Errorf("Binance request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCryptoBodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to read Binance response: %w", err)
+	}
+
+	log.Printf("[CRYPTO] Binance status=%d content-type=%s", resp.StatusCode, resp.Header.Get("Content-Type"))
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("Binance API returned HTTP %d: %s", resp.StatusCode, shortCryptoBody(body))
+	}
+
+	var all []struct {
+		Symbol        string `json:"symbol"`
+		LastPrice     string `json:"lastPrice"`
+		ChangePercent string `json:"priceChangePercent"`
+		QuoteVolume   string `json:"quoteVolume"`
+	}
+	if err := json.Unmarshal(body, &all); err != nil {
+		return "", fmt.Errorf("invalid Binance JSON response: %v (body: %s)", err, shortCryptoBody(body))
+	}
+
+	type ticker struct {
+		symbol   string
+		last     float64
+		change   float64
+		volume   float64
+	}
+	var usdt []ticker
+	for _, c := range all {
+		if !strings.HasSuffix(c.Symbol, "USDT") {
+			continue
+		}
+		last, err := strconv.ParseFloat(c.LastPrice, 64)
+		if err != nil || last <= 0 {
+			continue
+		}
+		change, _ := strconv.ParseFloat(c.ChangePercent, 64)
+		volume, _ := strconv.ParseFloat(c.QuoteVolume, 64)
+		usdt = append(usdt, ticker{symbol: c.Symbol, last: last, change: change, volume: volume})
+	}
+	sort.Slice(usdt, func(i, j int) bool { return usdt[i].volume > usdt[j].volume })
+	if len(usdt) > 10 {
+		usdt = usdt[:10]
+	}
+
+	var lines []string
+	for i, c := range usdt {
+		d := "+"
+		if c.change < 0 {
+			d = ""
+		}
+		lines = append(lines, fmt.Sprintf("  %d. %s — $%.2f (%s%.1f%%)", i+1, strings.TrimSuffix(c.symbol, "USDT"), c.last, d, c.change))
+	}
+	return "Top 10 Cryptocurrencies by 24h Volume (Binance):\n" + strings.Join(lines, "\n"), nil
 }

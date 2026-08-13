@@ -8,36 +8,43 @@ import (
 	"testing"
 )
 
-// fakeCoinGecko spins up an httptest server and points coingeckoBaseURL and
-// coinPaprikaBaseURL at it so fetchCrypto/fetchTop never hit the real APIs in
-// tests. The handler should route on r.URL.Path: /simple/price and
-// /coins/markets are CoinGecko, /tickers is CoinPaprika.
-func fakeCoinGecko(t *testing.T, handler http.HandlerFunc) *http.Client {
+// callCounts tracks how many requests each provider's path received.
+type callCounts struct {
+	gecko, paprika, binance atomic.Int32
+}
+
+// fakeCoinGecko spins up an httptest server and points all three provider
+// base URLs at it so fetchCrypto/fetchTop never hit real APIs in tests. The
+// handlers route on r.URL.Path: /simple/price and /coins/markets are
+// CoinGecko, /tickers is CoinPaprika, /ticker/24hr is Binance.
+func fakeCoinGecko(t *testing.T, counts *callCounts, gecko, paprika, binance http.HandlerFunc) *http.Client {
 	t.Helper()
-	srv := httptest.NewServer(handler)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/ticker/24hr"):
+			counts.binance.Add(1)
+			binance(w, r)
+		case strings.Contains(r.URL.Path, "/tickers"):
+			counts.paprika.Add(1)
+			paprika(w, r)
+		default:
+			counts.gecko.Add(1)
+			gecko(w, r)
+		}
+	}))
 	t.Cleanup(srv.Close)
 	oldGecko := coingeckoBaseURL
 	oldPaprika := coinPaprikaBaseURL
+	oldBinance := binanceBaseURL
 	coingeckoBaseURL = srv.URL
 	coinPaprikaBaseURL = srv.URL
+	binanceBaseURL = srv.URL
 	t.Cleanup(func() {
 		coingeckoBaseURL = oldGecko
 		coinPaprikaBaseURL = oldPaprika
+		binanceBaseURL = oldBinance
 	})
 	return srv.Client()
-}
-
-// paprikaCallCount returns a handler that serves the given responses and
-// counts how many times the CoinPaprika /tickers endpoint was hit.
-func paprikaCallCount(paprikaCalls *atomic.Int32, gecko http.HandlerFunc, paprika http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/tickers") {
-			paprikaCalls.Add(1)
-			paprika(w, r)
-			return
-		}
-		gecko(w, r)
-	}
 }
 
 func paprikaJSON(w http.ResponseWriter, _ *http.Request) {
@@ -53,14 +60,28 @@ func paprikaTopJSON(w http.ResponseWriter, _ *http.Request) {
 	]`))
 }
 
+func binanceJSON(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"symbol":"BTCUSDT","lastPrice":"63400.00","priceChangePercent":"0.10","quoteVolume":"16000000000"}`))
+}
+
+func binanceTopJSON(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`[
+		{"symbol":"BTCUSDT","lastPrice":"63400.00","priceChangePercent":"0.10","quoteVolume":"16000000000"},
+		{"symbol":"ETHUSDT","lastPrice":"3500.00","priceChangePercent":"-0.40","quoteVolume":"8000000000"},
+		{"symbol":"XRPUSDT","lastPrice":"0.50","priceChangePercent":"1.10","quoteVolume":"1000000"}
+	]`))
+}
+
 // 1. Valid 200 JSON response from CoinGecko renders the price and never
-// touches CoinPaprika.
+// touches the fallback providers.
 func TestFetchCrypto_Valid200(t *testing.T) {
-	var paprikaCalls atomic.Int32
-	client := fakeCoinGecko(t, paprikaCallCount(&paprikaCalls, func(w http.ResponseWriter, r *http.Request) {
+	var counts callCounts
+	client := fakeCoinGecko(t, &counts, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"bitcoin":{"usd":97000.5,"inr":8100000,"usd_24h_change":2.5,"usd_market_cap":1900000000000}}`))
-	}, paprikaJSON))
+	}, paprikaJSON, binanceJSON)
 
 	result, err := fetchCryptoWithClient("bitcoin", client)
 	if err != nil {
@@ -71,20 +92,20 @@ func TestFetchCrypto_Valid200(t *testing.T) {
 			t.Errorf("result missing %q:\n%s", want, result)
 		}
 	}
-	if paprikaCalls.Load() != 0 {
-		t.Errorf("CoinPaprika called %d times on a successful CoinGecko response", paprikaCalls.Load())
+	if counts.paprika.Load() != 0 || counts.binance.Load() != 0 {
+		t.Errorf("fallbacks called on success: paprika=%d binance=%d", counts.paprika.Load(), counts.binance.Load())
 	}
 }
 
 // 6. Successful Bitcoin response (explicit coverage of the required case).
 func TestFetchCrypto_BitcoinSuccess(t *testing.T) {
-	client := fakeCoinGecko(t, func(w http.ResponseWriter, r *http.Request) {
+	client := fakeCoinGecko(t, &callCounts{}, func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.URL.Path, "/simple/price") {
 			t.Errorf("expected /simple/price path, got %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"bitcoin":{"usd":50000,"inr":4200000,"usd_24h_change":-1.2,"usd_market_cap":950000000000}}`))
-	})
+	}, paprikaJSON, binanceJSON)
 
 	result, err := fetchCryptoWithClient("bitcoin", client)
 	if err != nil {
@@ -102,20 +123,19 @@ func TestFetchCrypto_HTTP429(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		w.Write([]byte(`{"status":{"error_code":429,"error_message":"Too many requests"}}`))
 	}
-	client := fakeCoinGecko(t, paprikaCallCount(&atomic.Int32{}, rateLimited, rateLimited))
+	client := fakeCoinGecko(t, &callCounts{}, rateLimited, rateLimited, rateLimited)
 
 	_, err := fetchCryptoWithClient("bitcoin", client)
 	if err == nil {
 		t.Fatal("expected error for HTTP 429")
 	}
-	if !strings.Contains(err.Error(), "HTTP 429") {
-		t.Errorf("error should mention HTTP 429, got: %v", err)
+	for _, want := range []string{"HTTP 429", "CoinPaprika fallback also failed", "Binance fallback also failed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q, got: %v", want, err)
+		}
 	}
 	if strings.Contains(err.Error(), "parse error") {
 		t.Errorf("vague parse error leaked through: %v", err)
-	}
-	if !strings.Contains(err.Error(), "CoinPaprika fallback also failed") {
-		t.Errorf("expected CoinPaprika fallback attempt to be reported, got: %v", err)
 	}
 }
 
@@ -124,7 +144,7 @@ func TestFetchCrypto_HTTP500(t *testing.T) {
 	serverError := func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 	}
-	client := fakeCoinGecko(t, paprikaCallCount(&atomic.Int32{}, serverError, serverError))
+	client := fakeCoinGecko(t, &callCounts{}, serverError, serverError, serverError)
 
 	_, err := fetchCryptoWithClient("bitcoin", client)
 	if err == nil {
@@ -141,7 +161,7 @@ func TestFetchCrypto_MalformedJSON(t *testing.T) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write([]byte(`<html>upstream gateway error, please retry</html>`))
 	}
-	client := fakeCoinGecko(t, paprikaCallCount(&atomic.Int32{}, html, html))
+	client := fakeCoinGecko(t, &callCounts{}, html, html, html)
 
 	_, err := fetchCryptoWithClient("bitcoin", client)
 	if err == nil {
@@ -156,14 +176,12 @@ func TestFetchCrypto_MalformedJSON(t *testing.T) {
 func TestFetchCrypto_CoinMissing(t *testing.T) {
 	notFound := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if strings.Contains(r.URL.Path, "/tickers") {
-			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte(`{"error":"id not found"}`))
-			return
-		}
-		w.Write([]byte(`{}`))
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":"not found"}`))
 	}
-	client := fakeCoinGecko(t, paprikaCallCount(&atomic.Int32{}, notFound, notFound))
+	client := fakeCoinGecko(t, &callCounts{}, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{}`))
+	}, notFound, notFound)
 
 	_, err := fetchCryptoWithClient("notacoin", client)
 	if err == nil {
@@ -174,29 +192,51 @@ func TestFetchCrypto_CoinMissing(t *testing.T) {
 	}
 }
 
-// 9. CoinGecko failure automatically falls back to CoinPaprika (real data).
+// 7. CoinGecko failure falls back to CoinPaprika.
 func TestFetchCrypto_FallsBackToCoinPaprika(t *testing.T) {
-	client := fakeCoinGecko(t, paprikaCallCount(&atomic.Int32{}, func(w http.ResponseWriter, r *http.Request) {
+	var counts callCounts
+	rateLimited := func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		w.Write([]byte(`{"error":"rate limited"}`))
-	}, paprikaJSON))
+	}
+	client := fakeCoinGecko(t, &counts, rateLimited, paprikaJSON, binanceJSON)
 
 	result, err := fetchCryptoWithClient("bitcoin", client)
 	if err != nil {
 		t.Fatalf("expected CoinPaprika fallback to succeed, got: %v", err)
 	}
-	if !strings.Contains(result, "Bitcoin Price (CoinPaprika)") {
+	if !strings.Contains(result, "Bitcoin Price (CoinPaprika)") || !strings.Contains(result, "INR: Rs.6050000.00") {
 		t.Errorf("expected CoinPaprika-sourced result, got:\n%s", result)
 	}
-	if !strings.Contains(result, "USD: $63400.00") || !strings.Contains(result, "INR: Rs.6050000.00") {
-		t.Errorf("unexpected fallback result:\n%s", result)
+	if counts.binance.Load() != 0 {
+		t.Errorf("Binance called %d times though CoinPaprika succeeded", counts.binance.Load())
 	}
 }
 
-// 7. fetchTop renders a valid 200 response and never touches CoinPaprika.
+// 8. CoinGecko + CoinPaprika failure falls back to Binance (real data).
+func TestFetchCrypto_FallsBackToBinance(t *testing.T) {
+	rateLimited := func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error":"rate limited"}`))
+	}
+	client := fakeCoinGecko(t, &callCounts{}, rateLimited, rateLimited, binanceJSON)
+
+	result, err := fetchCryptoWithClient("bitcoin", client)
+	if err != nil {
+		t.Fatalf("expected Binance fallback to succeed, got: %v", err)
+	}
+	if !strings.Contains(result, "Bitcoin Price (Binance)") {
+		t.Errorf("expected Binance-sourced result, got:\n%s", result)
+	}
+	if !strings.Contains(result, "USD: $63400.00") || !strings.Contains(result, "24h Volume") {
+		t.Errorf("unexpected Binance fallback result:\n%s", result)
+	}
+}
+
+// 9. fetchTop renders a valid 200 response and never touches fallbacks.
 func TestFetchTop_Valid200(t *testing.T) {
-	var paprikaCalls atomic.Int32
-	client := fakeCoinGecko(t, paprikaCallCount(&paprikaCalls, func(w http.ResponseWriter, r *http.Request) {
+	var counts callCounts
+	client := fakeCoinGecko(t, &counts, func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.URL.Path, "/coins/markets") {
 			t.Errorf("expected /coins/markets path, got %s", r.URL.Path)
 		}
@@ -205,7 +245,7 @@ func TestFetchTop_Valid200(t *testing.T) {
 			{"name":"Bitcoin","symbol":"btc","current_price":97000,"price_change_percentage_24h":2.5},
 			{"name":"Ethereum","symbol":"eth","current_price":3500,"price_change_percentage_24h":-0.4}
 		]`))
-	}, paprikaTopJSON))
+	}, paprikaTopJSON, binanceTopJSON)
 
 	result, err := fetchTopWithClient(client)
 	if err != nil {
@@ -216,19 +256,19 @@ func TestFetchTop_Valid200(t *testing.T) {
 			t.Errorf("result missing %q:\n%s", want, result)
 		}
 	}
-	if paprikaCalls.Load() != 0 {
-		t.Errorf("CoinPaprika called %d times on a successful CoinGecko response", paprikaCalls.Load())
+	if counts.paprika.Load() != 0 || counts.binance.Load() != 0 {
+		t.Errorf("fallbacks called on success: paprika=%d binance=%d", counts.paprika.Load(), counts.binance.Load())
 	}
 }
 
-// 8. fetchTop surfaces HTTP errors too.
+// 10. fetchTop surfaces HTTP errors from every provider.
 func TestFetchTop_HTTP429(t *testing.T) {
 	rateLimited := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
 		w.Write([]byte(`{"error":"rate limited"}`))
 	}
-	client := fakeCoinGecko(t, paprikaCallCount(&atomic.Int32{}, rateLimited, rateLimited))
+	client := fakeCoinGecko(t, &callCounts{}, rateLimited, rateLimited, rateLimited)
 
 	_, err := fetchTopWithClient(client)
 	if err == nil {
@@ -239,11 +279,12 @@ func TestFetchTop_HTTP429(t *testing.T) {
 	}
 }
 
-// 10. fetchTop falls back to CoinPaprika on CoinGecko failure.
+// 11. fetchTop falls back to CoinPaprika on CoinGecko failure.
 func TestFetchTop_FallsBackToCoinPaprika(t *testing.T) {
-	client := fakeCoinGecko(t, paprikaCallCount(&atomic.Int32{}, func(w http.ResponseWriter, r *http.Request) {
+	boom := func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
-	}, paprikaTopJSON))
+	}
+	client := fakeCoinGecko(t, &callCounts{}, boom, paprikaTopJSON, binanceTopJSON)
 
 	result, err := fetchTopWithClient(client)
 	if err != nil {
@@ -251,5 +292,24 @@ func TestFetchTop_FallsBackToCoinPaprika(t *testing.T) {
 	}
 	if !strings.Contains(result, "Top 10") || !strings.Contains(result, "(CoinPaprika)") {
 		t.Errorf("expected CoinPaprika-sourced top list, got:\n%s", result)
+	}
+}
+
+// 12. fetchTop falls back to Binance when both CoinGecko and CoinPaprika fail.
+func TestFetchTop_FallsBackToBinance(t *testing.T) {
+	boom := func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}
+	client := fakeCoinGecko(t, &callCounts{}, boom, boom, binanceTopJSON)
+
+	result, err := fetchTopWithClient(client)
+	if err != nil {
+		t.Fatalf("expected Binance fallback to succeed, got: %v", err)
+	}
+	if !strings.Contains(result, "Top 10") || !strings.Contains(result, "(Binance)") {
+		t.Errorf("expected Binance-sourced top list, got:\n%s", result)
+	}
+	if !strings.Contains(result, "BTC") || !strings.Contains(result, "ETH") {
+		t.Errorf("unexpected Binance top list:\n%s", result)
 	}
 }
