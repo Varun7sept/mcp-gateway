@@ -233,9 +233,8 @@ func (b *Brain) suggestAlternative(task *TaskDefinition, errMsg string) (*altern
 
 	reqBody := ChatRequest{
 		Messages: messages,
-		Model:    b.models[0],
 	}
-	chatResp, err := b.executeChat(reqBody)
+	chatResp, err := b.chatCall(reqBody)
 	if err != nil {
 		return nil, err
 	}

@@ -124,7 +124,6 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 
 	reqBody := ChatRequest{
 		Messages: messages,
-		Model:    b.models[0],
 	}
 	chatResp, err := b.chatCall(reqBody)
 	if err != nil {

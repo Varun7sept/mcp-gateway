@@ -1,20 +1,21 @@
 // Package ai provides the AI brain that decides which tools to call.
-// Uses Groq's free API (LLaMA 3.3 70B) with tool calling support.
+// Uses Groq as the primary LLM provider with Cerebras as an automatic
+// fallback, both with tool calling support.
 //
 // HOW IT WORKS:
 // 1. User asks a question in natural language
-// 2. We send the question + list of available tools to Groq
-// 3. Groq decides which tool to call (or just answers directly)
+// 2. We send the question + list of available tools to the LLM provider
+// 3. The provider decides which tool to call (or just answers directly)
 // 4. If a tool is needed, we call it via the gateway
-// 5. We send the tool result back to Groq for a final answer
+// 5. We send the tool result back to the provider for a final answer
 // 6. Return the natural language answer to the user
 package ai
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -27,23 +28,50 @@ import (
 
 // Brain is the AI engine that processes user questions.
 type Brain struct {
-	apiKey     string
-	models     []string
-	httpClient *http.Client
-	memory     memory.MemoryStore
-	// chatClient is a test hook. When set, it replaces the real Groq HTTP call
-	// so routing behavior can be tested without the network. It is nil in
-	// production, where chatCall falls back to executeChat.
+	memory memory.MemoryStore
+	// providers are tried in order: Groq first (with its model fallback list),
+	// then Cerebras when configured. The chain is built in New.
+	providers []LLMProvider
+	// chatClient is a test hook. When set, it replaces the real provider HTTP
+	// calls so routing behavior can be tested without the network. It is nil
+	// in production, where chatCall falls back to the provider chain.
 	chatClient func(ChatRequest) (*ChatResponse, error)
 }
 
 // chatCall routes a chat request through the test hook when set, otherwise
-// performs the real Groq HTTP call via executeChat.
+// performs the real LLM call via the provider chain.
 func (b *Brain) chatCall(req ChatRequest) (*ChatResponse, error) {
 	if b.chatClient != nil {
 		return b.chatClient(req)
 	}
-	return b.executeChat(req)
+	return b.chatWithProviders(req)
+}
+
+// chatWithProviders tries each configured provider in order. Retryable
+// provider errors advance to the next provider; non-retryable errors abort.
+func (b *Brain) chatWithProviders(req ChatRequest) (*ChatResponse, error) {
+	if len(b.providers) == 0 {
+		return nil, fmt.Errorf("no LLM providers configured")
+	}
+
+	var failures []string
+	for _, provider := range b.providers {
+		chatResp, err := provider.Chat(context.Background(), req)
+		if err == nil {
+			return chatResp, nil
+		}
+		var perr *ProviderError
+		if errors.As(err, &perr) && !perr.Retryable {
+			return nil, err
+		}
+		failures = append(failures, err.Error())
+		log.Printf("[LLM] provider=%s failed: %v", provider.Name(), err)
+	}
+
+	return nil, fmt.Errorf(
+		"all LLM providers failed: %s",
+		strings.Join(failures, "; "),
+	)
 }
 
 // WithMemory attaches a memory store for cross-session recall.
@@ -52,7 +80,9 @@ func (b *Brain) WithMemory(m memory.MemoryStore) *Brain {
 	return b
 }
 
-// New creates a new AI Brain with the given Groq API key.
+// New creates a new AI Brain with the given Groq API key. When the
+// CEREBRAS_API_KEY environment variable is set, Cerebras is configured as a
+// fallback provider (model from CEREBRAS_MODEL, default gpt-oss-120b).
 func New(apiKey string) *Brain {
 	models := []string{
 		"llama-3.3-70b-versatile",
@@ -68,10 +98,20 @@ func New(apiKey string) *Brain {
 		}
 	}
 
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	providers := []LLMProvider{NewGroqProvider(apiKey, models, httpClient)}
+
+	if cerebrasKey := strings.TrimSpace(os.Getenv("CEREBRAS_API_KEY")); cerebrasKey != "" {
+		cerebrasModel := strings.TrimSpace(os.Getenv("CEREBRAS_MODEL"))
+		if cerebrasModel == "" {
+			cerebrasModel = defaultCerebrasModel
+		}
+		providers = append(providers, NewCerebrasProvider(cerebrasKey, cerebrasModel, httpClient))
+		log.Printf("[LLM] provider=cerebras configured (model=%s)", cerebrasModel)
+	}
+
 	return &Brain{
-		apiKey:     apiKey,
-		models:     models,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		providers: providers,
 	}
 }
 
@@ -122,86 +162,6 @@ type ChatResponse struct {
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
-}
-
-// executeChat tries the configured Groq models in order. Rate limits are
-// model-specific, so a 429 from one model can be served by another model.
-func (b *Brain) executeChat(request ChatRequest) (*ChatResponse, error) {
-	var failures []string
-
-	for _, model := range b.models {
-		request.Model = model
-		bodyBytes, err := json.Marshal(request)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal request: %w", err)
-		}
-
-		req, err := http.NewRequest(
-			http.MethodPost,
-			"https://api.groq.com/openai/v1/chat/completions",
-			bytes.NewReader(bodyBytes),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+b.apiKey)
-
-		resp, err := b.httpClient.Do(req)
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", model, err))
-			continue
-		}
-
-		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024)) // 4 MB max
-		resp.Body.Close()
-		if readErr != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", model, readErr))
-			continue
-		}
-
-		var chatResp ChatResponse
-		if err := json.Unmarshal(respBody, &chatResp); err != nil {
-			failures = append(failures, fmt.Sprintf("%s: invalid response", model))
-			if resp.StatusCode >= 500 {
-				continue
-			}
-			return nil, fmt.Errorf("Groq model %s returned an invalid response: %w", model, err)
-		}
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 && chatResp.Error == nil {
-			if len(chatResp.Choices) == 0 {
-				failures = append(failures, model+": empty response")
-				continue
-			}
-			log.Printf("[GROQ] model %q OK", model)
-			return &chatResp, nil
-		}
-
-		message := http.StatusText(resp.StatusCode)
-		if chatResp.Error != nil && chatResp.Error.Message != "" {
-			message = chatResp.Error.Message
-		}
-		if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
-			message += " (retry after " + retryAfter + "s)"
-		}
-		failures = append(failures, fmt.Sprintf("%s: %s", model, message))
-
-		// Try another model for rate limits, unavailable/deprecated models,
-		// model permission failures, and temporary Groq server errors.
-		if resp.StatusCode == http.StatusTooManyRequests ||
-			resp.StatusCode == http.StatusForbidden ||
-			resp.StatusCode == http.StatusNotFound ||
-			resp.StatusCode >= 500 {
-			continue
-		}
-		return nil, fmt.Errorf("Groq model %s failed: %s", model, message)
-	}
-
-	return nil, fmt.Errorf(
-		"all Groq models failed: %s",
-		strings.Join(failures, "; "),
-	)
 }
 
 // ToolCallResult is returned when the AI wants to call a tool.
@@ -321,12 +281,12 @@ func (b *Brain) DecideAction(userMessage string, conversationHistory []Message) 
 	messages = append(messages, conversationHistory...)
 	messages = append(messages, Message{Role: "user", Content: userMessage})
 
-	// Call Groq API
+	// Call the LLM provider
 	reqBody := ChatRequest{
 		Messages: messages,
 		Tools:    GetAvailableTools(),
 	}
-	chatResp, err := b.executeChat(reqBody)
+	chatResp, err := b.chatCall(reqBody)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +325,7 @@ func stripThinkTags(s string) string {
 	return strings.TrimSpace(thinkRegex.ReplaceAllString(s, ""))
 }
 
-// GenerateFinalAnswer sends the tool result back to Groq for a natural language response.
+// GenerateFinalAnswer sends the tool result to the LLM for a natural language response.
 func (b *Brain) GenerateFinalAnswer(userMessage string, toolName string, toolCallID string, toolResult string) (string, error) {
 	messages := []Message{
 		{
@@ -389,7 +349,7 @@ func (b *Brain) GenerateFinalAnswer(userMessage string, toolName string, toolCal
 	reqBody := ChatRequest{
 		Messages: messages,
 	}
-	chatResp, err := b.executeChat(reqBody)
+	chatResp, err := b.chatCall(reqBody)
 	if err != nil {
 		return toolResult, err
 	}
