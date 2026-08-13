@@ -52,29 +52,90 @@ func handleCryptoTool(w http.ResponseWriter, req MCPRequest) {
 	}
 }
 
+// maxCryptoBodyBytes caps how much of a CoinGecko response we read.
+const maxCryptoBodyBytes = 4 * 1024 * 1024
+
+// shortCryptoBody returns a trimmed, length-capped excerpt of a response body
+// for errors and logs. Never log a full body.
+func shortCryptoBody(body []byte) string {
+	excerpt := strings.TrimSpace(string(body))
+	if len(excerpt) > 200 {
+		excerpt = excerpt[:200] + "..."
+	}
+	return excerpt
+}
+
+// coingeckoBaseURL is package-level so tests can point it at a fake HTTP
+// server instead of hitting the real CoinGecko API.
+var coingeckoBaseURL = "https://api.coingecko.com/api/v3"
+
 func fetchCrypto(coin string) (string, error) {
-	resp, err := cryptoClient.Get(fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd,inr&include_24hr_change=true&include_market_cap=true", strings.ToLower(coin)))
-	if err != nil { return "", err }
+	return fetchCryptoWithClient(coin, cryptoClient)
+}
+
+func fetchCryptoWithClient(coin string, client *http.Client) (string, error) {
+	url := fmt.Sprintf("%s/simple/price?ids=%s&vs_currencies=usd,inr&include_24hr_change=true&include_market_cap=true", coingeckoBaseURL, strings.ToLower(coin))
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("CoinGecko request failed: %w", err)
+	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil { return "", fmt.Errorf("read error: %w", err) }
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCryptoBodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to read CoinGecko response: %w", err)
+	}
+
+	log.Printf("[CRYPTO] CoinGecko status=%d content-type=%s", resp.StatusCode, resp.Header.Get("Content-Type"))
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("CoinGecko API returned HTTP %d: %s", resp.StatusCode, shortCryptoBody(body))
+	}
+
 	var data map[string]map[string]float64
-	if err := json.Unmarshal(body, &data); err != nil { return "", fmt.Errorf("parse error") }
+	if err := json.Unmarshal(body, &data); err != nil {
+		return "", fmt.Errorf("invalid CoinGecko JSON response: %v (body: %s)", err, shortCryptoBody(body))
+	}
 	d, ok := data[strings.ToLower(coin)]
-	if !ok { return "", fmt.Errorf("coin '%s' not found", coin) }
+	if !ok {
+		return "", fmt.Errorf("coin '%s' not found. Try: bitcoin, ethereum, solana, dogecoin, cardano", coin)
+	}
 	dir := "up"
-	if d["usd_24h_change"] < 0 { dir = "down" }
+	if d["usd_24h_change"] < 0 {
+		dir = "down"
+	}
 	return fmt.Sprintf("%s Price:\n  USD: $%.2f\n  INR: Rs.%.2f\n  24h: %.2f%% (%s)\n  Market Cap: $%.0f", strings.Title(coin), d["usd"], d["inr"], d["usd_24h_change"], dir, d["usd_market_cap"]), nil
 }
 
 func fetchTop() (string, error) {
-	resp, err := cryptoClient.Get("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1")
-	if err != nil { return "", err }
+	return fetchTopWithClient(cryptoClient)
+}
+
+func fetchTopWithClient(client *http.Client) (string, error) {
+	resp, err := client.Get(coingeckoBaseURL + "/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1")
+	if err != nil {
+		return "", fmt.Errorf("CoinGecko request failed: %w", err)
+	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil { return "", fmt.Errorf("read error: %w", err) }
-	var coins []struct { Name string `json:"name"`; Symbol string `json:"symbol"`; Price float64 `json:"current_price"`; Change24h float64 `json:"price_change_percentage_24h"` }
-	if err := json.Unmarshal(body, &coins); err != nil { return "", fmt.Errorf("parse error") }
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCryptoBodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to read CoinGecko response: %w", err)
+	}
+
+	log.Printf("[CRYPTO] CoinGecko status=%d content-type=%s", resp.StatusCode, resp.Header.Get("Content-Type"))
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("CoinGecko API returned HTTP %d: %s", resp.StatusCode, shortCryptoBody(body))
+	}
+
+	var coins []struct {
+		Name      string  `json:"name"`
+		Symbol    string  `json:"symbol"`
+		Price     float64 `json:"current_price"`
+		Change24h float64 `json:"price_change_percentage_24h"`
+	}
+	if err := json.Unmarshal(body, &coins); err != nil {
+		return "", fmt.Errorf("invalid CoinGecko JSON response: %v (body: %s)", err, shortCryptoBody(body))
+	}
 	var lines []string
 	for i, c := range coins {
 		d := "+"
