@@ -30,6 +30,19 @@ type Brain struct {
 	models     []string
 	httpClient *http.Client
 	memory     memory.MemoryStore
+	// chatClient is a test hook. When set, it replaces the real Groq HTTP call
+	// so routing behavior can be tested without the network. It is nil in
+	// production, where chatCall falls back to executeChat.
+	chatClient func(ChatRequest) (*ChatResponse, error)
+}
+
+// chatCall routes a chat request through the test hook when set, otherwise
+// performs the real Groq HTTP call via executeChat.
+func (b *Brain) chatCall(req ChatRequest) (*ChatResponse, error) {
+	if b.chatClient != nil {
+		return b.chatClient(req)
+	}
+	return b.executeChat(req)
 }
 
 // WithMemory attaches a memory store for cross-session recall.

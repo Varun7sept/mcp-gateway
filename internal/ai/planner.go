@@ -126,7 +126,7 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 		Messages: messages,
 		Model:    b.models[0],
 	}
-	chatResp, err := b.executeChat(reqBody)
+	chatResp, err := b.chatCall(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("planning failed: %w", err)
 	}

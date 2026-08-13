@@ -215,7 +215,7 @@ func (b *Brain) callGroq(messages []Message) (*Message, error) {
 		Tools:    GetAvailableTools(),
 	}
 
-	chatResp, err := b.executeChat(reqBody)
+	chatResp, err := b.chatCall(reqBody)
 	if err != nil {
 		return nil, err
 	}

@@ -75,7 +75,7 @@ func (b *Brain) ProcessWithOrchestrator(
 	}
 
 	if len(plan.Tasks) == 0 {
-		return b.handleNoTools(userMessage, messages, callTool, start)
+		return b.generateDirectAnswer(userMessage, messages, start)
 	}
 
 	tasksWithApproval, err := b.checkApprovals(plan, cfg)
@@ -247,48 +247,44 @@ func (b *Brain) fallbackToDirect(userMessage string, messages []Message, callToo
 	}, nil
 }
 
-func (b *Brain) handleNoTools(userMessage string, messages []Message, callTool func(name string, args map[string]any) (string, error), start time.Time) (*OrchestratorResult, error) {
-	// Count how many user/assistant turns exist (excluding the current user message).
-	// If this is the very first message there's no history to draw from — go straight
-	// to the tool agent so it can call a tool rather than saying "I don't know".
-	historyCount := 0
-	for _, m := range messages {
-		if m.Role == "user" || m.Role == "assistant" {
-			historyCount++
+// directSystemPrompt returns the system instructions for the no-tool path.
+func directSystemPrompt() string {
+	return "You are a helpful AI assistant. Answer the user's question directly from your knowledge and the conversation history.\n\n" +
+		"RULES:\n" +
+		"1. No tools are available to you — do not mention, pretend, or attempt to call any tool.\n" +
+		"2. Use conversation history when relevant, resolving pronouns from context.\n" +
+		"3. Provide code examples, explanations, and definitions when appropriate.\n" +
+		"4. Be concise, factual, and conversational.\n" +
+		"5. Do not output  thinking tags."
+}
+
+// generateDirectAnswer handles the successful planner zero-task path. When the
+// planner returns tasks = [], the decision is final: no external tool is
+// required. The answer comes from a plain LLM completion that carries NO tools,
+// so the model is never offered (or able to attempt) web_search or any other
+// tool. This path must NOT enter the tool-enabled agent (RunAgent,
+// RunAgentWithHistory, callGroq) or any other second tool-selection logic.
+func (b *Brain) generateDirectAnswer(userMessage string, messages []Message, start time.Time) (*OrchestratorResult, error) {
+	// Swap the original agent system prompt (index 0, which advertises tools)
+	// for the no-tool direct-answer prompt, keeping history/memory context.
+	directMessages := []Message{{Role: "system", Content: directSystemPrompt()}}
+	directMessages = append(directMessages, messages[1:]...)
+
+	var finalAnswer string
+	// Retry once — Groq can occasionally return an empty response.
+	for attempt := 0; attempt < 2; attempt++ {
+		chatResp, err := b.chatCall(ChatRequest{Messages: directMessages})
+		if err == nil && len(chatResp.Choices) > 0 && strings.TrimSpace(chatResp.Choices[0].Message.Content) != "" {
+			finalAnswer = stripThinkTags(chatResp.Choices[0].Message.Content)
+			break
 		}
 	}
-	// historyCount includes the current user message, so <=1 means no prior turns.
-	if historyCount <= 1 {
-		return b.fallbackToDirect(userMessage, messages, callTool, start)
+
+	if strings.TrimSpace(finalAnswer) == "" {
+		return nil, fmt.Errorf("direct answer generation failed: no response from LLM")
 	}
 
-	// There IS prior context — ask the model to answer from it, but signal
-	// NEED_TOOL if a specific fact isn't in the history.
-	contextMessages := append([]Message{}, messages...)
-	contextMessages[0] = Message{
-		Role: "system",
-		Content: "You are a helpful AI assistant. Answer the user's question using the conversation history above.\n\n" +
-			"RULES:\n" +
-			"1. Always resolve pronouns from context — 'he/she/they/it/his/her' refer to the subject of the prior conversation. Never ask 'who do you mean?'.\n" +
-			"2. If the answer is clearly in the history (e.g. a date, name, fact was mentioned), answer directly and concisely.\n" +
-			"3. If the question asks for a specific fact (date, stat, number, event) that is genuinely NOT anywhere in the history, respond with exactly: NEED_TOOL\n" +
-			"4. Never make up facts. Never say 'I don't have tools' or ask for clarification. Either answer from history or respond NEED_TOOL.",
-	}
-
-	choice, err := b.callGroq(contextMessages)
-	if err != nil {
-		return b.fallbackToDirect(userMessage, messages, callTool, start)
-	}
-	answer := stripThinkTags(choice.Content)
-
-	// If model signals it needs a tool, or answer is blank, fall through to tool agent.
-	if strings.TrimSpace(answer) == "" || strings.Contains(strings.ToUpper(answer), "NEED_TOOL") {
-		return b.fallbackToDirect(userMessage, messages, callTool, start)
-	}
-
-	return &OrchestratorResult{
-		Answer: answer,
-	}, nil
+	return &OrchestratorResult{Answer: finalAnswer}, nil
 }
 
 func (b *Brain) compileResults(plan *Plan, report *ExecutionReport, userMessage string, start time.Time) (string, []AgentStep) {
