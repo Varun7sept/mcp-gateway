@@ -128,6 +128,7 @@ func (b *Brain) DecomposeGoal(goal string, history []Message) (*Plan, error) {
 	}
 	chatResp, err := b.chatCall(reqBody)
 	if err != nil {
+		log.Printf("[PLANNER] chatCall FAILED: %v", err)
 		return nil, fmt.Errorf("planning failed: %w", err)
 	}
 

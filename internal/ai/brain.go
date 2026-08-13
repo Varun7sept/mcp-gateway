@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"regexp"
@@ -173,6 +174,7 @@ func (b *Brain) executeChat(request ChatRequest) (*ChatResponse, error) {
 				failures = append(failures, model+": empty response")
 				continue
 			}
+			log.Printf("[GROQ] model %q OK", model)
 			return &chatResp, nil
 		}
 

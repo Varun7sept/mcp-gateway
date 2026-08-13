@@ -3,6 +3,7 @@ package ai
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -71,12 +72,16 @@ func (b *Brain) ProcessWithOrchestrator(
 
 	plan, err := b.DecomposeGoal(userMessage, messages)
 	if err != nil {
+		log.Printf("[ROUTING] planner FAILED -> fallbackToDirect: %v", err)
 		return b.fallbackToDirect(userMessage, messages, callTool, start)
 	}
+	log.Printf("[ROUTING] planner OK -> %d tasks", len(plan.Tasks))
 
 	if len(plan.Tasks) == 0 {
+		log.Printf("[ROUTING] zero tasks -> generateDirectAnswer (ChatRequest Tools=nil)")
 		return b.generateDirectAnswer(userMessage, messages, start)
 	}
+	log.Printf("[ROUTING] %d tasks -> ExecutePlan (tools WILL run)", len(plan.Tasks))
 
 	tasksWithApproval, err := b.checkApprovals(plan, cfg)
 	if err != nil {
@@ -226,6 +231,7 @@ func (b *Brain) checkApprovals(plan *Plan, cfg *OrchestratorConfig) (*Orchestrat
 }
 
 func (b *Brain) fallbackToDirect(userMessage string, messages []Message, callTool func(name string, args map[string]any) (string, error), start time.Time) (*OrchestratorResult, error) {
+	log.Printf("[ROUTING] fallbackToDirect: entering tool-enabled agent (RunAgentWithHistory)")
 	// Convert []Message → []map[string]string so RunAgentWithHistory gets full context.
 	// This ensures pronoun resolution works — "he" → correct person from history.
 	var history []map[string]string
@@ -265,6 +271,7 @@ func directSystemPrompt() string {
 // tool. This path must NOT enter the tool-enabled agent (RunAgent,
 // RunAgentWithHistory, callGroq) or any other second tool-selection logic.
 func (b *Brain) generateDirectAnswer(userMessage string, messages []Message, start time.Time) (*OrchestratorResult, error) {
+	log.Printf("[ROUTING] generateDirectAnswer: sending ChatRequest with NO tools")
 	// Swap the original agent system prompt (index 0, which advertises tools)
 	// for the no-tool direct-answer prompt, keeping history/memory context.
 	directMessages := []Message{{Role: "system", Content: directSystemPrompt()}}
