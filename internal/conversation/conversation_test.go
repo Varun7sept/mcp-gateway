@@ -53,11 +53,6 @@ func TestConversationSummaryGenerator_Generate(t *testing.T) {
 }
 
 func TestConversationSummaryGenerator_Fallback(t *testing.T) {
-	gen := NewConversationSummaryGenerator(nil, ConversationSummaryConfig{
-		MessageThreshold: 20,
-		TokenThreshold:   8000,
-	})
-
 	messages := []Message{
 		{Role: "user", Content: "hello"},
 	}

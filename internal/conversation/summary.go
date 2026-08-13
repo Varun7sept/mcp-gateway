@@ -84,7 +84,10 @@ func fallbackConversationSummary(messages []Message) string {
 	for _, m := range messages {
 		content := strings.TrimSpace(m.Content)
 		if len(content) > 20 {
-			topics = append(topics, content[:100])
+			if len(content) > 100 {
+				content = content[:100]
+			}
+			topics = append(topics, content)
 		}
 	}
 	if len(topics) == 0 {

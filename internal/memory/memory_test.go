@@ -68,7 +68,6 @@ func TestImportanceScorer_ScoreBounds(t *testing.T) {
 
 func TestGenerateMemoryID(t *testing.T) {
 	id1 := GenerateMemoryID("hello", time.Now())
-	id2 := GenerateMemoryID("hello", time.Now())
 	id3 := GenerateMemoryID("different query", time.Now())
 
 	if id1 == "" {
