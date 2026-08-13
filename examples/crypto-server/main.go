@@ -111,19 +111,53 @@ func handleToolCall(w http.ResponseWriter, req MCPRequest) {
 	}
 }
 
+// maxBodyBytes caps how much of a CoinGecko response we read, so a runaway
+// or error body cannot exhaust memory.
+const maxBodyBytes = 4 * 1024 * 1024
+
+// shortBody returns a trimmed, length-capped excerpt of a response body for
+// use in errors and logs. Never log a full body.
+func shortBody(body []byte) string {
+	excerpt := strings.TrimSpace(string(body))
+	if len(excerpt) > 200 {
+		excerpt = excerpt[:200] + "..."
+	}
+	return excerpt
+}
+
+// coingeckoBaseURL and coingeckoClient are package-level so tests can point
+// them at a fake HTTP server instead of hitting the real CoinGecko API.
+var (
+	coingeckoBaseURL = "https://api.coingecko.com/api/v3"
+	coingeckoClient  = &http.Client{Timeout: 10 * time.Second}
+)
+
 func fetchCryptoPrice(coin string) (string, error) {
-	url := fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=%s&vs_currencies=usd,inr&include_24hr_change=true&include_market_cap=true", coin)
-	client := &http.Client{Timeout: 10 * time.Second}
+	return fetchCryptoPriceWithClient(coin, coingeckoClient)
+}
+
+func fetchCryptoPriceWithClient(coin string, client *http.Client) (string, error) {
+	url := fmt.Sprintf("%s/simple/price?ids=%s&vs_currencies=usd,inr&include_24hr_change=true&include_market_cap=true", coingeckoBaseURL, coin)
 	resp, err := client.Get(url)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("CoinGecko request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to read CoinGecko response: %w", err)
+	}
+
+	log.Printf("[CRYPTO] CoinGecko status=%d content-type=%s", resp.StatusCode, resp.Header.Get("Content-Type"))
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("CoinGecko API returned HTTP %d: %s", resp.StatusCode, shortBody(body))
+	}
 
 	var data map[string]map[string]float64
 	if err := json.Unmarshal(body, &data); err != nil {
-		return "", fmt.Errorf("failed to parse response")
+		return "", fmt.Errorf("invalid CoinGecko JSON response: %v (body: %s)", err, shortBody(body))
 	}
 
 	coinData, exists := data[coin]
@@ -146,14 +180,27 @@ func fetchCryptoPrice(coin string) (string, error) {
 }
 
 func fetchTopCryptos() (string, error) {
-	url := "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1"
-	client := &http.Client{Timeout: 10 * time.Second}
+	return fetchTopCryptosWithClient(coingeckoClient)
+}
+
+func fetchTopCryptosWithClient(client *http.Client) (string, error) {
+	url := coingeckoBaseURL + "/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=10&page=1"
 	resp, err := client.Get(url)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("CoinGecko request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to read CoinGecko response: %w", err)
+	}
+
+	log.Printf("[CRYPTO] CoinGecko status=%d content-type=%s", resp.StatusCode, resp.Header.Get("Content-Type"))
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("CoinGecko API returned HTTP %d: %s", resp.StatusCode, shortBody(body))
+	}
 
 	var coins []struct {
 		Name       string  `json:"name"`
@@ -163,7 +210,7 @@ func fetchTopCryptos() (string, error) {
 		MarketCap  float64 `json:"market_cap"`
 	}
 	if err := json.Unmarshal(body, &coins); err != nil {
-		return "", fmt.Errorf("failed to parse response")
+		return "", fmt.Errorf("invalid CoinGecko JSON response: %v (body: %s)", err, shortBody(body))
 	}
 
 	var lines []string
