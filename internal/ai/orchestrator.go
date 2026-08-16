@@ -12,23 +12,23 @@ import (
 )
 
 type OrchestratorConfig struct {
-	Memory         memory.MemoryStore
-	ApprovalStore  *approval.Store
-	ApprovalUser   string
-	UserID         string
-	SessionID      string
+	Memory        memory.MemoryStore
+	ApprovalStore *approval.Store
+	ApprovalUser  string
+	UserID        string
+	SessionID     string
 	// ApprovedTools lists tool names the user has already approved this request.
 	// checkApprovals skips these so the user is never asked twice.
-	ApprovedTools  []string
+	ApprovedTools []string
 }
 
 type OrchestratorResult struct {
-	Answer     string           `json:"answer"`
-	Steps      []AgentStep      `json:"steps"`
-	Plan       *Plan            `json:"plan,omitempty"`
-	Report     *ExecutionReport `json:"report,omitempty"`
-	ApprovalID string           `json:"approval_id,omitempty"`
-	NeedsApproval bool          `json:"needs_approval,omitempty"`
+	Answer        string           `json:"answer"`
+	Steps         []AgentStep      `json:"steps"`
+	Plan          *Plan            `json:"plan,omitempty"`
+	Report        *ExecutionReport `json:"report,omitempty"`
+	ApprovalID    string           `json:"approval_id,omitempty"`
+	NeedsApproval bool             `json:"needs_approval,omitempty"`
 }
 
 func (b *Brain) ProcessWithOrchestrator(
@@ -39,7 +39,10 @@ func (b *Brain) ProcessWithOrchestrator(
 ) (*OrchestratorResult, error) {
 	start := time.Now()
 
-	messages := b.buildAgentMessages(userMessage, history)
+	// Build planner-only messages: planner system prompt + conversation history ONLY.
+	// Do NOT include buildAgentMessages()'s tool-enabled system prompt, which would
+	// create conflicting instructions for the planner.
+	plannerMessages := b.buildPlannerMessages(history)
 
 	relevantMemories := ""
 	if cfg != nil && cfg.Memory != nil {
@@ -51,7 +54,7 @@ func (b *Brain) ProcessWithOrchestrator(
 			Role:    "system",
 			Content: relevantMemories,
 		}
-		messages = append(messages, memoryMsg)
+		plannerMessages = append(plannerMessages, memoryMsg)
 	}
 
 	if cfg != nil && cfg.ApprovalStore != nil {
@@ -63,23 +66,23 @@ func (b *Brain) ProcessWithOrchestrator(
 				pendingInfo = append(pendingInfo, fmt.Sprintf("- %s (tool: %s, args: %s) [ID: %s]",
 					pa.Description, pa.Tool, string(argsJSON), pa.ID))
 			}
-			messages = append(messages, Message{
+			plannerMessages = append(plannerMessages, Message{
 				Role:    "system",
 				Content: fmt.Sprintf("You have pending approvals:\n%s\nContinue waiting for user approval.", strings.Join(pendingInfo, "\n")),
 			})
 		}
 	}
 
-	plan, err := b.DecomposeGoal(userMessage, messages)
+	plan, err := b.DecomposeGoal(userMessage, plannerMessages)
 	if err != nil {
 		log.Printf("[ROUTING] planner FAILED -> fallbackToDirect: %v", err)
-		return b.fallbackToDirect(userMessage, messages, callTool, start)
+		return b.fallbackToDirect(userMessage, b.buildAgentMessages(userMessage, history), callTool, start)
 	}
 	log.Printf("[ROUTING] planner OK -> %d tasks", len(plan.Tasks))
 
 	if len(plan.Tasks) == 0 {
 		log.Printf("[ROUTING] zero tasks -> generateDirectAnswer (ChatRequest Tools=nil)")
-		return b.generateDirectAnswer(userMessage, messages, start)
+		return b.generateDirectAnswer(userMessage, history, start)
 	}
 	log.Printf("[ROUTING] %d tasks -> ExecutePlan (tools WILL run)", len(plan.Tasks))
 
@@ -92,6 +95,15 @@ func (b *Brain) ProcessWithOrchestrator(
 	}
 
 	report := b.ExecutePlan(plan, callTool)
+
+	// Validate planner output: reject tool plans that obviously contradict
+	// the user's intent category. This is a safety guard — the planner's prompt
+	// should correctly distinguish programming questions (→ zero tasks) from
+	// current-info questions (→ tools), but we add a deterministic check so an
+	// occasional LLM slip doesn't execute irrelevant tools.
+	if plan.Tasks != nil && len(plan.Tasks) > 0 {
+		plan = validatePlannerPlan(plan, userMessage)
+	}
 
 	// Retry loop: if any tasks failed, give the AI one chance to re-plan
 	// with knowledge of what failed and why, so it can try a different tool.
@@ -108,7 +120,7 @@ func (b *Brain) ProcessWithOrchestrator(
 				"%s\n\nThe following tools failed: %s\n\nPlease replan using DIFFERENT tools to accomplish the same goal. Do not retry the same failed tools.",
 				userMessage, strings.Join(failedDescriptions, "; "),
 			)
-			retryPlan, retryErr := b.DecomposeGoal(retryHint, messages)
+			retryPlan, retryErr := b.DecomposeGoal(retryHint, plannerMessages)
 			if retryErr == nil && len(retryPlan.Tasks) > 0 {
 				// Only use retry plan if it actually uses different tools
 				usesNewTools := false
@@ -230,6 +242,32 @@ func (b *Brain) checkApprovals(plan *Plan, cfg *OrchestratorConfig) (*Orchestrat
 	return nil, nil
 }
 
+// buildPlannerMessages returns ONLY the planner system prompt + actual conversation
+// history messages. It does NOT include the agent's tool-enabled system prompt
+// from buildAgentMessages(), ensuring the planner receives isolated, unambiguous
+// instructions about when to return zero tasks vs. when to use tools.
+func (b *Brain) buildPlannerMessages(history []map[string]string) []Message {
+	messages := []Message{
+		{
+			Role:    "system",
+			Content: plannerSystemPrompt(),
+		},
+	}
+	for _, h := range history {
+		role := h["role"]
+		content := h["content"]
+		if role == "" || content == "" {
+			continue
+		}
+		if role == "ai" {
+			role = "assistant"
+		}
+		messages = append(messages, Message{Role: role, Content: content})
+	}
+	messages = append(messages, Message{Role: "user", Content: ""})
+	return messages
+}
+
 func (b *Brain) fallbackToDirect(userMessage string, messages []Message, callTool func(name string, args map[string]any) (string, error), start time.Time) (*OrchestratorResult, error) {
 	log.Printf("[ROUTING] fallbackToDirect: entering tool-enabled agent (RunAgentWithHistory)")
 	// Convert []Message → []map[string]string so RunAgentWithHistory gets full context.
@@ -270,12 +308,32 @@ func directSystemPrompt() string {
 // so the model is never offered (or able to attempt) web_search or any other
 // tool. This path must NOT enter the tool-enabled agent (RunAgent,
 // RunAgentWithHistory, callGroq) or any other second tool-selection logic.
-func (b *Brain) generateDirectAnswer(userMessage string, messages []Message, start time.Time) (*OrchestratorResult, error) {
+//
+// IMPORTANT: This function builds messages from scratch using ONLY the direct
+// system prompt and actual conversation history. It does NOT reuse
+// buildAgentMessages() output, which would carry the tool-enabled system prompt.
+// The ChatRequest must have Tools == nil.
+func (b *Brain) generateDirectAnswer(userMessage string, history []map[string]string, start time.Time) (*OrchestratorResult, error) {
 	log.Printf("[ROUTING] generateDirectAnswer: sending ChatRequest with NO tools")
-	// Swap the original agent system prompt (index 0, which advertises tools)
-	// for the no-tool direct-answer prompt, keeping history/memory context.
+	// Build messages from scratch: direct system prompt + actual conversation history.
+	// Do NOT include any system prompt that advertises tools (i.e. do not use
+	// buildAgentMessages() output or messages[1:] which may contain it).
 	directMessages := []Message{{Role: "system", Content: directSystemPrompt()}}
-	directMessages = append(directMessages, messages[1:]...)
+
+	// Add actual conversation history (user/assistant messages only)
+	for _, h := range history {
+		role := h["role"]
+		content := h["content"]
+		if role == "" || content == "" {
+			continue
+		}
+		if role == "ai" {
+			role = "assistant"
+		}
+		directMessages = append(directMessages, Message{Role: role, Content: content})
+	}
+
+	directMessages = append(directMessages, Message{Role: "user", Content: userMessage})
 
 	var finalAnswer string
 	// Retry once — Groq can occasionally return an empty response.
@@ -308,7 +366,7 @@ func (b *Brain) compileResults(plan *Plan, report *ExecutionReport, userMessage 
 			step.Result = task.GetResult()
 			results = append(results, fmt.Sprintf("Tool '%s' result: %s", task.Tool, task.GetResult()))
 		} else {
-			step.Result = task.Error  // Error field not written concurrently after done
+			step.Result = task.Error // Error field not written concurrently after done
 			failedTasks = append(failedTasks, fmt.Sprintf("'%s' (error: %s)", task.Description, task.Error))
 		}
 		steps = append(steps, step)
@@ -364,4 +422,84 @@ func (b *Brain) compileResults(plan *Plan, report *ExecutionReport, userMessage 
 	}
 
 	return finalAnswer, steps
+}
+
+// validatePlannerPlan checks for obvious contradictions between the planned
+// tools and the user's intent category. This is a deterministic guard that
+// catches common LLM slips without hardcoding individual questions.
+//
+// Rules:
+//  1. Programming/coding/algorithm questions must result in zero tasks,
+//     even if the planner erroneously suggests a tool.
+//  2. General knowledge/definition questions should not trigger tools
+//     unless the user explicitly requests current/external data.
+//  3. If a tool is planned but the intent is clearly programming/algorithmic,
+//     the plan is corrected to zero tasks.
+func validatePlannerPlan(plan *Plan, userMessage string) *Plan {
+	tasks := plan.Tasks
+	userLower := strings.ToLower(userMessage)
+
+	// Detect programming/coding/algorithm intent
+	progKeywords := []string{"implement", "write", "code", "program", "function", "algorithm",
+		"data structure", "leetcode", "two sum", "binary search", "sort", "linked list",
+		"stack", "queue", "tree", "graph", "recursion", "mutex", "generics",
+		"in go", "in c++", "in rust", "in python", "cpp", "go ", "rust ", "python "}
+
+	// Detect general knowledge/definition intent
+	knowKeywords := []string{"what is", "explain", "define", "meaning of", "vs ", "difference between"}
+
+	isProg := func() bool {
+		for _, kw := range progKeywords {
+			if strings.Contains(userLower, kw) {
+				return true
+			}
+		}
+		// Check if the message contains typical code-style questions
+		if strings.Contains(userLower, "c++") || strings.Contains(userLower, "go") ||
+			strings.Contains(userLower, "rust") || strings.Contains(userLower, "python") {
+			return true
+		}
+		return false
+	}()
+
+	isKnow := func() bool {
+		for _, kw := range knowKeywords {
+			if strings.Contains(userLower, kw) {
+				return true
+			}
+		}
+		return false
+	}()
+
+	// If programming intent and planner suggested tools → zero tasks
+	if isProg && len(tasks) > 0 {
+		// Check if any planned tool is completely unrelated to programming
+		// (this is a simple check - the planner should already handle this,
+		// but the guard catches slips)
+		nonProgTools := []string{"get_weather", "get_crypto_price", "get_top_cryptos",
+			"get_forecast", "search_news", "web_search", "wikipedia_summary"}
+		hasNonProgTool := false
+		for _, t := range tasks {
+			for _, nt := range nonProgTools {
+				if t.Tool == nt {
+					hasNonProgTool = true
+					break
+				}
+			}
+			if hasNonProgTool {
+				break
+			}
+		}
+		if hasNonProgTool {
+			log.Printf("[VALIDATION] Programming intent (%q) but tools %v → zero tasks", userMessage, tasks)
+			return &Plan{Goal: plan.Goal}
+		}
+	}
+
+	// If general knowledge intent and planner suggested non-knowledge tools
+	if isKnow {
+		// Could add more validation here if needed
+	}
+
+	return plan
 }

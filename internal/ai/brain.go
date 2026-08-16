@@ -253,7 +253,17 @@ func makeTool(name, description string, properties map[string]any, required []st
 	}
 }
 
-// DecideAction sends the user's question to Groq and determines what to do.
+// DecideAction is a LEGACY tool-selection function.
+// It has been superseded by the planner-based routing in ProcessWithOrchestrator().
+// This function still contains old tool-selection rules that conflict with the
+// plannerSystemPrompt(). Do NOT use this for new development — it may be removed
+// or replaced in a future release.
+//
+// For normal routing, the planner (DecomposeGoal) is the sole authority on whether
+// tools are needed. DecideAction may only be used for explicit legacy compatibility
+// or diagnostic purposes.
+//
+//go:generate // deprecated — use planner-based routing instead
 func (b *Brain) DecideAction(userMessage string, conversationHistory []Message) (*ToolCallResult, error) {
 	// Build messages: system prompt + history + new message
 	messages := []Message{
@@ -274,7 +284,7 @@ func (b *Brain) DecideAction(userMessage string, conversationHistory []Message) 
 				"1. NEVER answer statistics, records, dates, or numbers from memory — always verify with a tool.\n" +
 				"2. NEVER use both search_news and web_search for the same intent — pick one.\n" +
 				"3. For follow-up questions (e.g. 'when did he retire?'), use context from prior messages before calling a tool.\n" +
-				"4. Strip <think> tags — never include them in your response.\n" +
+				"4. Strip  tags — never include them in your response.\n" +
 				"5. Be concise, factual, and conversational.",
 		},
 	}
