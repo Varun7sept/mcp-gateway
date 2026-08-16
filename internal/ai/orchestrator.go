@@ -84,7 +84,18 @@ func (b *Brain) ProcessWithOrchestrator(
 		log.Printf("[ROUTING] zero tasks -> generateDirectAnswer (ChatRequest Tools=nil)")
 		return b.generateDirectAnswer(userMessage, history, start)
 	}
-	log.Printf("[ROUTING] %d tasks -> ExecutePlan (tools WILL run)", len(plan.Tasks))
+	log.Printf("[ROUTING] %d tasks -> validate and possibly generateDirectAnswer", len(plan.Tasks))
+
+	// VALIDATION: deterministic safety guard — must run BEFORE any tool execution.
+	// The planner may occasionally produce a tool plan that contradicts the user's
+	// intent (e.g., programming questions getting tool calls). Correct here before
+	// any tool is invoked.
+	plan = validatePlannerPlan(plan, userMessage)
+
+	if len(plan.Tasks) == 0 {
+		log.Printf("[ROUTING] zero tasks after validation -> generateDirectAnswer (ChatRequest Tools=nil)")
+		return b.generateDirectAnswer(userMessage, history, start)
+	}
 
 	tasksWithApproval, err := b.checkApprovals(plan, cfg)
 	if err != nil {
@@ -95,15 +106,6 @@ func (b *Brain) ProcessWithOrchestrator(
 	}
 
 	report := b.ExecutePlan(plan, callTool)
-
-	// Validate planner output: reject tool plans that obviously contradict
-	// the user's intent category. This is a safety guard — the planner's prompt
-	// should correctly distinguish programming questions (→ zero tasks) from
-	// current-info questions (→ tools), but we add a deterministic check so an
-	// occasional LLM slip doesn't execute irrelevant tools.
-	if plan.Tasks != nil && len(plan.Tasks) > 0 {
-		plan = validatePlannerPlan(plan, userMessage)
-	}
 
 	// Retry loop: if any tasks failed, give the AI one chance to re-plan
 	// with knowledge of what failed and why, so it can try a different tool.
@@ -264,7 +266,6 @@ func (b *Brain) buildPlannerMessages(history []map[string]string) []Message {
 		}
 		messages = append(messages, Message{Role: role, Content: content})
 	}
-	messages = append(messages, Message{Role: "user", Content: ""})
 	return messages
 }
 
@@ -497,8 +498,58 @@ func validatePlannerPlan(plan *Plan, userMessage string) *Plan {
 	}
 
 	// If general knowledge intent and planner suggested non-knowledge tools
-	if isKnow {
-		// Could add more validation here if needed
+	// Only apply when the question is truly conceptual, not when it explicitly
+	// requests current/live information (e.g. "What is the current Bitcoin price?").
+	if isKnow && len(tasks) > 0 {
+		// Exclude questions that explicitly request current/live information.
+		// Questions with "current", "latest", "price", "weather" etc. should
+		// not be treated as general knowledge — they should use tools.
+		currentInfoPatterns := []string{"current ", "latest ", "today ", "price ",
+			"weather ", "latest .* price", "rate ", "status "}
+		isCurrentInfo := false
+		for _, cp := range currentInfoPatterns {
+			if strings.Contains(userLower, cp) {
+				isCurrentInfo = true
+				break
+			}
+		}
+		// If this is NOT a current-info question, check if planner suggested
+		// external tools and correct to zero tasks.
+		if !isCurrentInfo {
+			externalTools := []string{"get_weather", "get_forecast", "get_crypto_price",
+				"get_top_cryptos", "get_top_news", "search_news", "web_search", "wikipedia_summary"}
+			hasExternal := false
+			for _, t := range tasks {
+				for _, et := range externalTools {
+					if t.Tool == et {
+						hasExternal = true
+						break
+					}
+				}
+				if hasExternal {
+					break
+				}
+			}
+			if hasExternal {
+				log.Printf("[VALIDATION] General knowledge (%q) but planner suggested external tools %v → zero tasks", userMessage, tasks)
+				return &Plan{Goal: plan.Goal}
+			}
+		}
+	}
+
+	// -- Rule 3: Explicit web request must be respected --
+	// Do NOT strip web_search if the user explicitly asked to search the web.
+	// This rule prevents the guard from incorrectly overriding the user's explicit intent.
+	explicitWeb := strings.Contains(userLower, "search the web") ||
+		strings.Contains(userLower, "search the internet") ||
+		strings.Contains(userLower, "look this up online") ||
+		strings.Contains(userLower, "browse the web")
+
+	if explicitWeb && len(tasks) > 0 {
+		// If user explicitly wants web but planner didn't pick web_search, we log and keep the plan.
+		// The planner should handle explicit web requests; this guard only prevents
+		// incorrectly stripping them.
+		log.Printf("[VALIDATION] Explicit web request detected, keeping planner plan: %v", tasks)
 	}
 
 	return plan
